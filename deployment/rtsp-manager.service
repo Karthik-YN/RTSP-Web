@@ -1,0 +1,61 @@
+# /etc/systemd/system/rtsp-manager.service
+# RIG-02 stream manager: web UI/API + one FFmpeg publisher per stream.
+#
+# Boot order: network -> mediamtx.service -> rtsp-manager.service.
+# On start the backend republishes every stream whose desired state is
+# RUNNING (see docs/ARCHITECTURE.md "Recovery").
+[Unit]
+Description=RIG-02 RTSP Stream Manager
+Documentation=file:///opt/rtsp-manager/README.md
+Wants=network-online.target mediamtx.service
+# "Wants" not "Requires": the dashboard must stay up (and able to restart
+# MediaMTX) even if MediaMTX fails.
+After=network-online.target mediamtx.service
+
+[Service]
+Type=simple
+User=rtspmgr
+Group=rtspmgr
+Environment=RTSPM_LISTEN_HOST=0.0.0.0
+Environment=RTSPM_LISTEN_PORT=8080
+EnvironmentFile=/etc/rtsp-manager/rtsp-manager.env
+WorkingDirectory=/opt/rtsp-manager/backend
+# Exactly ONE worker: this process owns the FFmpeg publishers.
+ExecStart=/opt/rtsp-manager/backend/.venv/bin/python -m uvicorn app.main:app \
+    --host ${RTSPM_LISTEN_HOST} --port ${RTSPM_LISTEN_PORT} --workers 1 \
+    --timeout-graceful-shutdown 20 --no-server-header
+Restart=always
+RestartSec=2
+
+# Restart/upgrade: only the backend process is stopped (KillMode=process).
+# Each stream's publisher runs in its own session and keeps playing; the new
+# backend re-adopts it, so cameras on the edge are not interrupted.
+# To stop every stream: stop them in the UI, or run
+#   sudo -u rtspmgr /opt/rtsp-manager/scripts/stop_publishers.sh
+# (a reboot/shutdown also stops them; they come back on boot).
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65536
+UMask=0027
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Writable locations (database, logs, thumbnails, playlists, video library)
+ReadWritePaths=/var/lib/rtsp-manager /data/rtsp-manager/videos
+
+[Install]
+WantedBy=multi-user.target

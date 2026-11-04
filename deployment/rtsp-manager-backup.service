@@ -1,0 +1,9 @@
+# Nightly state backup for RIG-02 (database, users, configuration).
+[Unit]
+Description=RIG-02 RTSP Stream Manager backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rtsp-manager/scripts/backup.sh /var/backups/rtsp-manager 14
+Nice=10
+IOSchedulingClass=idle

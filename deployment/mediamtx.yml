@@ -1,0 +1,93 @@
+###############################################################################
+# MediaMTX configuration for RIG-02 (RTSP Stream Manager)
+# Tested with MediaMTX v1.21.x. Install to /etc/mediamtx/mediamtx.yml.
+#
+# Exposure summary:
+#   :8554/tcp  RTSP           office network (readers: edge, VLC, ffprobe)
+#   127.0.0.1:9997  Control API   local only (backend health + inspection)
+#   127.0.0.1:9998  Prometheus    local only
+# Publishing is only allowed from this machine (the backend's FFmpeg).
+###############################################################################
+
+logLevel: info
+logDestinations: [stdout]   # captured by journald (journalctl -u mediamtx)
+
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 512
+udpMaxPayloadSize: 1472
+
+###############################################################################
+# Authentication / authorisation
+authMethod: internal
+authInternalUsers:
+  # The backend and its FFmpeg publishers run on this host: allow publish,
+  # API and metrics from loopback only.
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: publish
+      - action: read
+      - action: api
+      - action: metrics
+  # Everyone else (office network, edge devices) may only read streams.
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+
+###############################################################################
+# Control API and metrics: bound to loopback, never exposed to the network.
+api: yes
+apiAddress: 127.0.0.1:9997
+metrics: yes
+metricsAddress: 127.0.0.1:9998
+pprof: no
+playback: no
+
+###############################################################################
+# RTSP server
+rtsp: yes
+rtspAddress: :8554
+# TCP-interleaved transport only (one firewall port, no RTP/RTCP UDP ports,
+# reliable over Wi-Fi). Readers that try UDP first get "461 Unsupported
+# Transport" and fall back to TCP. If the 5.x edge requires UDP, use
+#   rtspTransports: [tcp, udp]
+# and open 8000/udp + 8001/udp (rtpAddress / rtcpAddress) in the firewall.
+rtspTransports: [tcp]
+rtspEncryption: "no"
+rtspAuthMethods: [basic]
+
+# Other protocols are not used by the test rig; keep them off. NOTE: new
+# MediaMTX releases add servers that are ON by default (v1.21 added MoQ on
+# :8892/:8893). After upgrading MediaMTX, check `ss -lntup` (or
+# scripts/healthcheck.sh) that only :8554 is reachable from the network.
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+moq: no
+
+###############################################################################
+# Paths
+pathDefaults:
+  # A second publisher for an existing path is rejected instead of silently
+  # replacing the running one (the backend never starts two per path).
+  overridePublisher: no
+  # Early readers (EC-12): when a reader (e.g. the edge) asks for a path that
+  # has no publisher yet, MediaMTX runs this placeholder command and HOLDS the
+  # reader's DESCRIBE request for up to runOnDemandStartTimeout, instead of
+  # answering 404 immediately. As soon as the backend's FFmpeg starts
+  # publishing, the waiting reader receives the stream. The placeholder never
+  # publishes anything; when no reader needs it any more MediaMTX stops it
+  # ("not needed by anyone"); this does not affect the real publisher.
+  runOnDemand: sleep 3600
+  runOnDemandRestart: no
+  runOnDemandStartTimeout: 60s
+  runOnDemandCloseAfter: 10s
+
+paths:
+  # Any stream name created by the backend.
+  all_others:

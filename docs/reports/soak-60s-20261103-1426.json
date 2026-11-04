@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-11-03T08:56:57.091296+00:00",
+  "requested_s": 60,
+  "wall_s": 60.1,
+  "media_span_s": 60.03,
+  "ratio_wall_to_media": 1.002,
+  "packets": 1804,
+  "expected_packets": 1799,
+  "max_step_s": 0.0667,
+  "duplicate_pts": 5,
+  "large_backward_jumps": 0,
+  "loop_period_s": 12.012,
+  "loop_count": 4,
+  "expected_loops": 4,
+  "publisher_restarts": 0,
+  "status": "RUNNING",
+  "reader_exit_code": 0,
+  "reader_stderr": ""
+}

@@ -1,0 +1,215 @@
+import { useRef, useState } from "react";
+import { api, ApiError, uploadVideo } from "../services/api";
+import { formatBytes, formatTime } from "../lib/format";
+import type { User, Video } from "../types/api";
+import { ConfirmDialog, ErrorBox, Pill, Spinner, useToast } from "./common";
+import { CameraIcon, FilmIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
+
+export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
+  videos: Video[]; loading: boolean; user: User | null; onChanged: () => void;
+  onCreateStream: (videoId: number) => void; search: string; setSearch: (s: string) => void;
+}) {
+  const toast = useToast();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const r = await api.refreshVideos();
+      toast("info", `Library rescanned: ${r.added} new, ${r.updated} changed, ${r.missing} missing` +
+        (r.settling.length ? `, ${r.settling.length} still being copied` : ""));
+      onChanged();
+    } catch (e) {
+      toast("bad", (e as ApiError).message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const [deleting, setDeleting] = useState<Video | null>(null);
+  const usable = videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject");
+  const doDelete = async (v: Video) => {
+    try {
+      toast("ok", (await api.deleteVideo(v.id)).message);
+      onChanged();
+    } catch (e) {
+      toast("bad", (e as ApiError).message);
+    }
+  };
+  const unusable = videos.filter((v) => !(v.status === "READY" && v.compat_mode !== "reject"));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full max-w-xs">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-subtle" />
+          <input className="input pl-8" placeholder="Search file names…" value={search}
+            onChange={(e) => setSearch(e.target.value)} aria-label="Search videos" />
+        </div>
+        <button className="btn-secondary" onClick={refresh} disabled={refreshing}>
+          {refreshing ? <Spinner /> : <RefreshIcon />} Refresh
+        </button>
+        {user?.can_write && <UploadButton onDone={onChanged} />}
+        <span className="text-xs text-muted lg:ml-auto">Files copied into the server's video folder appear after Refresh (or within 30 s).</span>
+      </div>
+
+      {loading && videos.length === 0 && <div className="p-6"><Spinner /></div>}
+      {!loading && videos.length === 0 && (
+        <div className="card flex flex-col items-center gap-2 p-10 text-center text-muted">
+          <FilmIcon className="h-10 w-10 text-subtle" />
+          {search ? "No videos match the search." : <>The library is empty.<br />Upload a video or copy files into the server folder, then press Refresh.</>}
+        </div>
+      )}
+
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
+        {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
+          onCreateStream={onCreateStream} onDelete={setDeleting} />)}
+      </div>
+
+      {deleting && (
+        <ConfirmDialog title={`Delete ${deleting.filename}?`} danger confirmLabel="Move to trash"
+          message={<>The file is moved to the library's <span className="font-mono">.trash</span> folder on the server and purged after 7 days
+            (an admin can restore it from there). Videos used by a stream cannot be deleted.</>}
+          onCancel={() => setDeleting(null)} onConfirm={() => { const v = deleting; setDeleting(null); doDelete(v); }} />
+      )}
+
+      {unusable.length > 0 && (
+        <details className="card p-3" open={usable.length === 0}>
+          <summary className="cursor-pointer text-sm font-medium text-fg">
+            {unusable.length} file{unusable.length > 1 ? "s" : ""} cannot be streamed
+          </summary>
+          <ul className="mt-2 space-y-1 text-sm">
+            {unusable.map((v) => (
+              <li key={v.id} className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{v.rel_path}</span>
+                {user?.is_admin && v.status !== "MISSING" && (
+                  <button className="btn-ghost btn-xs text-red-600" onClick={() => setDeleting(v)}>Delete</button>
+                )}
+                <span className="text-red-700 dark:text-red-300">{v.error ?? v.compat_reasons.join(" ")}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
+  v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
+}) {
+  const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
+  return (
+    <div className="card flex flex-col overflow-hidden">
+      <div className="relative aspect-video bg-slate-800">
+        {v.thumbnail_url
+          ? <img src={v.thumbnail_url} alt="" loading="lazy" className="h-full w-full object-contain" />
+          : <div className="flex h-full items-center justify-center"><FilmIcon className="h-8 w-8 text-muted" /></div>}
+        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white">
+          {formatTime(v.duration_s, false)}
+        </span>
+        {v.streams_using > 0 && (
+          <span className="absolute left-1.5 top-1.5 rounded bg-green-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">
+            {v.streams_using} stream{v.streams_using > 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col gap-1.5 p-3">
+        <div className="break-all text-sm font-medium leading-snug" title={v.rel_path}>{v.rel_path}</div>
+        <div className="flex flex-wrap gap-x-2 text-xs text-muted">
+          <span>{v.width}×{v.height}</span>
+          <span>{v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")} fps` : "–"}</span>
+          <span>{v.video_codec}{v.bit_depth && v.bit_depth !== 8 ? ` ${v.bit_depth}-bit` : ""}</span>
+          <span>{formatBytes(v.size_bytes)}</span>
+        </div>
+        <div className="flex flex-wrap gap-1" title={tip}>
+          {v.compat_mode === "copy" && <Pill tone="ok">Edge-ready (copy)</Pill>}
+          {v.compat_mode === "transcode" && <Pill tone="warn">Needs transcode</Pill>}
+          {v.is_vfr && <Pill tone="info">VFR</Pill>}
+          {v.audio_codec && <Pill tone="muted">audio dropped</Pill>}
+          {v.keyframe_interval_s && v.keyframe_interval_s > 4 && <Pill tone="warn">long GOP</Pill>}
+        </div>
+        {canWrite && (
+          <div className="mt-auto flex gap-1.5">
+            <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
+            {isAdmin && (
+              <button className="btn-secondary px-2 text-red-600 dark:text-red-400" onClick={() => onDelete(v)}
+                disabled={v.streams_using > 0} title={v.streams_using > 0 ? "Used by a stream" : "Delete video (admin)"}
+                aria-label={`Delete ${v.filename}`}><TrashIcon /></button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UploadButton({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [progress, setProgress] = useState<{ name: string; loaded: number; total: number; started: number; note?: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<() => void>(() => {});
+
+  const pick = async (file: File) => {
+    setError(null);
+    try {
+      // Ask first: is there room? The server refuses before any byte is sent.
+      const chk = await api.uploadCheck(file.name, file.size);
+      if (chk.exists) {
+        setError(`A file named '${chk.filename}' already exists in the library.`);
+        return;
+      }
+      if (!chk.ok) {
+        setError(`Not enough disk space: needs ${formatBytes(chk.required)}, available ${formatBytes(chk.available)} ` +
+          `(free ${formatBytes(chk.free)} minus safety reserve ${formatBytes(chk.reserve)}` +
+          `${chk.in_flight_uploads ? ` and ${formatBytes(chk.in_flight_uploads)} of other uploads in progress` : ""}).`);
+        return;
+      }
+    } catch (e) {
+      setError((e as ApiError).message);
+      return;
+    }
+    const started = Date.now();
+    setProgress({ name: file.name, loaded: 0, total: file.size, started });
+    const { promise, abort } = uploadVideo(file, (loaded, total, note) => setProgress({ name: file.name, loaded, total, started, note }));
+    abortRef.current = abort;
+    try {
+      const v = await promise;
+      toast("ok", `Uploaded ${v.filename} (${formatTime(v.duration_s, false)}, ${v.video_codec})`);
+      onDone();
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.status === -1) { toast("info", "Upload cancelled."); return; }
+      const d = err.data as { required?: number; free?: number; available?: number };
+      setError(err.status === 507 && d.required
+        ? `${err.message} Needs ${formatBytes(d.required)}, free ${formatBytes(d.free)}, available ${formatBytes(d.available)}.`
+        : err.message);
+    } finally {
+      setProgress(null);
+      if (input.current) input.current.value = "";
+    }
+  };
+
+  const pct = progress ? Math.floor((progress.loaded / Math.max(1, progress.total)) * 100) : 0;
+  const rate = progress ? progress.loaded / Math.max(0.5, (Date.now() - progress.started) / 1000) : 0;
+  return (
+    <>
+      <input ref={input} type="file" className="hidden" accept="video/*,.mkv,.ts,.mts,.m2ts"
+        onChange={(e) => e.target.files?.[0] && pick(e.target.files[0])} />
+      {progress ? (
+        <div className="flex min-w-[20rem] items-center gap-2 text-xs">
+          <div className="flex-1">
+            <div className="truncate">{progress.name}: {pct}% ({formatBytes(progress.loaded)} / {formatBytes(progress.total)}, {formatBytes(rate)}/s)
+              {progress.note && <span className="ml-1 text-amber-600 dark:text-amber-400">{progress.note}</span>}</div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded bg-line"><div className="h-full bg-brand-strong" style={{ width: `${pct}%` }} /></div>
+          </div>
+          <button className="btn-secondary btn-xs" onClick={() => abortRef.current()}>Cancel</button>
+        </div>
+      ) : (
+        <button className="btn-primary" onClick={() => input.current?.click()}><UploadIcon /> Upload video</button>
+      )}
+      {error && <div className="w-full"><ErrorBox>{error}</ErrorBox></div>}
+    </>
+  );
+}
