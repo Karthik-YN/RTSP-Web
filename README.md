@@ -79,6 +79,7 @@ Edge-dependent tests are manual: **[docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATIO
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptoms → causes → fixes |
 | [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Test strategy, automated suite, **13-case QA matrix** |
 | [docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATION.md) | Manual runbook for the 5.x edge (30-min loop, 16-stream reboot) |
+| [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) | How it works in plain terms, and a full script for demoing it to the team |
 | [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md) | Acceptance checklist, performance and recovery results, report template |
 
 ## Repository layout
