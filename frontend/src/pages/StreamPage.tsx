@@ -6,6 +6,7 @@ import { api, ApiError } from "../services/api";
 import { formatBitrate, formatBytes, formatTime, since } from "../lib/format";
 import type { StreamDetail } from "../types/api";
 import { Avatar, CopyButton, ErrorBox, Pill, Skeleton, Spinner, StatusBadge, useToast, WarnBox } from "../components/common";
+import { LivePlayer } from "../components/LivePlayer";
 import { canControl, useStreamActions } from "../components/StreamsTable";
 import { ChevronLeftIcon, ImageIcon, LockIcon, PlayIcon, RestartIcon, StopIcon, TrashIcon } from "../components/icons";
 
@@ -90,6 +91,11 @@ export function StreamPage() {
       {tab === "overview" && (
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
+            {s.status === "RUNNING" && (
+              <Panel title="Live preview" right={<span className="text-xs text-subtle">a few seconds behind the RTSP stream</span>}>
+                <LivePlayer streamId={s.id} />
+              </Panel>
+            )}
             <UptimeBar streamId={s.id} />
             <Panel title="Live status">
               <KV k="Desired / actual" v={<>{s.desired_state} / {s.status}</>} />
@@ -120,7 +126,7 @@ export function StreamPage() {
             </Panel>
           </div>
           <div className="space-y-4">
-            <Panel title="Preview">
+            <Panel title="RTSP check">
               <div className="flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-900">
                 {snap ? <img src={snap} alt="RTSP snapshot" className="h-full w-full object-contain" onLoad={() => setSnapLoading(false)}
                   onError={() => { setSnap(null); setSnapLoading(false); }} />

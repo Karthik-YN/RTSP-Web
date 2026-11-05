@@ -27,11 +27,13 @@ def free_port() -> int:
 
 def main() -> int:
     binary, config = sys.argv[1], Path(sys.argv[2])
-    rtsp, api, metrics = free_port(), free_port(), free_port()
+    rtsp, api, metrics, hls = free_port(), free_port(), free_port(), free_port()
     text = config.read_text()
     text = re.sub(r"(?m)^rtspAddress:.*$", f"rtspAddress: :{rtsp}", text)
     text = re.sub(r"(?m)^apiAddress:.*$", f"apiAddress: 127.0.0.1:{api}", text)
     text = re.sub(r"(?m)^metricsAddress:.*$", f"metricsAddress: 127.0.0.1:{metrics}", text)
+    # keep the config's own interface for HLS (a wildcard must be caught), but use a spare port
+    text = re.sub(r"(?m)^(hlsAddress:\s*\S*:)\d+\s*$", rf"\g<1>{hls}", text)
     with tempfile.TemporaryDirectory() as d:
         cfg = Path(d) / "m.yml"
         cfg.write_text(text)

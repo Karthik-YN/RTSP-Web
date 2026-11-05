@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type StreamInput } from "../services/api";
 import { formatDuration, formatTime, parseTime, suggestName, validateName } from "../lib/format";
 import type { AppConfig, Stream, ValidateResult, Video } from "../types/api";
+import { LivePlayer } from "./LivePlayer";
 import { CopyButton, ErrorBox, Modal, Pill, Spinner, WarnBox } from "./common";
 
 export interface StreamTemplate {
@@ -103,6 +104,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
           <span className="flex-1 break-all" data-testid="created-url">{created.rtsp_url}</span>
           <CopyButton text={created.rtsp_url} label="Copy URL" />
         </div>
+        <LivePlayer streamId={created.id} className="mt-3" />
         <p className="mt-3 text-xs text-muted">
           The edge can be pointed at the URL right away; if it connects before the first frame is published, the
           server holds the connection until the stream is live.

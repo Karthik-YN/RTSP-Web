@@ -25,12 +25,13 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def mediamtx_config(rtsp_port: int, api_port: int, metrics_port: int, hold_s: int = 60) -> str:
+def mediamtx_config(rtsp_port: int, api_port: int, metrics_port: int, hold_s: int = 60, hls_port: int = 0) -> str:
     """The real deployment/mediamtx.yml with test ports substituted."""
     text = (REPO / "deployment" / "mediamtx.yml").read_text()
     text = text.replace("rtspAddress: :8554", f"rtspAddress: :{rtsp_port}")
     text = text.replace("127.0.0.1:9997", f"127.0.0.1:{api_port}")
     text = text.replace("127.0.0.1:9998", f"127.0.0.1:{metrics_port}")
+    text = text.replace("127.0.0.1:8888", f"127.0.0.1:{hls_port or free_port()}")
     text = text.replace("runOnDemandStartTimeout: 60s", f"runOnDemandStartTimeout: {hold_s}s")
     return text
 

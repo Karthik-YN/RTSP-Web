@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     # Where FFmpeg publishes to (always the local MediaMTX instance).
     publish_rtsp_base: str = "rtsp://127.0.0.1:8554"
     mediamtx_api_url: str = "http://127.0.0.1:9997"
+    mediamtx_hls_url: str = "http://127.0.0.1:8888"  # loopback; proxied for the dashboard preview
 
     # ------------------------------------------------------- MediaMTX control
     # systemd: ask systemd (via polkit) to start/restart mediamtx.service

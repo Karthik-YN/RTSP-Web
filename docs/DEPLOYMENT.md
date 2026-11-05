@@ -45,7 +45,7 @@ The actual office IP or name is **not** known to this repository. Ask the networ
 |---|---|---|
 | 8554/tcp | RTSP (MediaMTX) | office LAN (edges, laptops) |
 | 8080/tcp | dashboard (or 80/tcp with nginx) | office LAN |
-| 9997/tcp, 9998/tcp | MediaMTX API / metrics | **loopback only** (enforced by config) |
+| 9997/tcp, 9998/tcp, 8888/tcp | MediaMTX API / metrics / HLS for the dashboard preview | **loopback only** (enforced by config); the preview reaches browsers through the backend |
 | 8000-8001/udp | RTP/RTCP | only if you enable UDP in `mediamtx.yml` (`rtspTransports: [tcp, udp]`) |
 
 With ufw:
@@ -58,7 +58,40 @@ sudo ufw enable
 
 (`scripts/install.sh --configure-firewall` adds the two rules, without a source restriction, only if ufw is already active.) Check what is reachable with `scripts/healthcheck.sh`, which flags 9997/9998/MoQ/HLS/WebRTC if they are ever exposed.
 
-## 4. Install
+## 4. Choose how to run it
+
+| | **`python3 app.py`** (simple) | **`scripts/install.sh`** (permanent) |
+|---|---|---|
+| Setup | Copy the folder, run one command | Installer as root |
+| Starts after a server reboot | No, unless you add the cron line below | Yes |
+| Streams survive the app restarting | No: restart stops streams, then they come back | Yes: they keep playing |
+| HTTPS, nightly backups, restricted service accounts | No | Yes |
+| Good for | Trying it on the server, small team use | The real test rig (the ticket's reboot requirement) |
+
+**Simple option.** On the VM:
+
+```bash
+sudo apt-get install -y python3-venv ffmpeg
+cd /opt/rig02            # wherever you copied the folder
+python3 app.py
+```
+
+Get the folder there with `git clone`, or from your Mac (leave out the local environment and data):
+
+```bash
+tar --exclude=backend/.venv --exclude=frontend/node_modules --exclude=tests/.fixtures --exclude=storage --exclude=bin --exclude=.git --exclude=.claude -czf ~/rig02.tar.gz -C /path/to/rtsp-stream-manager .
+scp ~/rig02.tar.gz <user>@<server>:~
+```
+
+`frontend/dist` is included, so Node isn't needed on the server. To start it after a reboot (streams that were running come back with it), add to the crontab of the account that runs it (`crontab -e`):
+
+```
+@reboot cd /opt/rig02 && /usr/bin/python3 app.py --no-browser >> storage/logs/boot.log 2>&1
+```
+
+Use **one Linux account** for the folder: `storage/` belongs to whoever first ran it, so someone logged in as a different user can see that it's running, but can't start or stop it. Everyone else just uses the dashboard address.
+
+## 4b. Install (permanent)
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git

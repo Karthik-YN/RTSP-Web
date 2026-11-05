@@ -199,6 +199,8 @@ class MediaMTXService:
         for it in items:
             readers = []
             for rd in it.get("readers") or []:
+                if str(rd.get("type", "")).startswith("hls"):
+                    continue  # the dashboard preview is not a camera viewer
                 sess = sessions.get(rd.get("id"), {})
                 readers.append({
                     "type": rd.get("type"), "id": rd.get("id"),

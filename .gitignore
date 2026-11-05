@@ -7,7 +7,6 @@ backend/.venv/
 
 # Node
 frontend/node_modules/
-frontend/dist/
 *.tsbuildinfo
 
 # Runtime state, media and secrets: never commit
@@ -25,6 +24,7 @@ tests/.fixtures/
 !.env.example
 users
 secret_key
+bin/
 recovery-*.csv
 loadtest-*.csv
 

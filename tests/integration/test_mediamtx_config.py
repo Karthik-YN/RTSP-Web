@@ -14,9 +14,9 @@ pytestmark = pytest.mark.integration
 def test_only_rtsp_listens_on_non_loopback(tmp_path):
     if not have_binaries("mediamtx"):
         pytest.skip("mediamtx not installed")
-    rtsp, api, metrics = free_port(), free_port(), free_port()
+    rtsp, api, metrics, hls = free_port(), free_port(), free_port(), free_port()
     cfg = tmp_path / "m.yml"
-    cfg.write_text(mediamtx_config(rtsp, api, metrics))
+    cfg.write_text(mediamtx_config(rtsp, api, metrics, hls_port=hls))
     proc = subprocess.Popen(["mediamtx", str(cfg)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         def listening():
@@ -33,7 +33,7 @@ def test_only_rtsp_listens_on_non_loopback(tmp_path):
         exposed = sorted({c.laddr.port for c in conns if c.laddr.ip not in ("127.0.0.1", "::1")})
         loopback = sorted({c.laddr.port for c in conns if c.laddr.ip in ("127.0.0.1", "::1")})
         assert exposed == [rtsp], f"unexpected network listeners: {exposed}"
-        assert set(loopback) == {api, metrics}
+        assert set(loopback) == {api, metrics, hls}
         assert proc.poll() is None
     finally:
         proc.terminate()
@@ -42,6 +42,7 @@ def test_only_rtsp_listens_on_non_loopback(tmp_path):
 
 def test_config_disables_every_optional_server():
     text = (REPO / "deployment" / "mediamtx.yml").read_text()
-    for key in ("rtmp: no", "hls: no", "webrtc: no", "srt: no", "moq: no", "pprof: no", "playback: no"):
+    for key in ("rtmp: no", "webrtc: no", "srt: no", "moq: no", "pprof: no", "playback: no"):
         assert f"\n{key}" in text, key
     assert "apiAddress: 127.0.0.1:" in text and "metricsAddress: 127.0.0.1:" in text
+    assert "hlsAddress: 127.0.0.1:" in text  # preview goes through the backend only

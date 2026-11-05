@@ -150,6 +150,7 @@ Users stay in the hashed users file (not SQLite): atomic writes, works with the 
 
 ## 9a. Observability
 
+* **Live preview:** browsers can't play RTSP, so the dashboard plays the same video as HLS (`hls.js`; native in Safari). MediaMTX's HLS server binds to loopback and the backend proxies it at `/api/streams/{id}/live/`, so no port is added and the login applies. There is no re-encoding, and HLS is generated only while someone watches (closed after 60 s idle). Preview sessions are excluded from viewer counts. MediaMTX needs 3 segments before the first playlist and a segment can't be shorter than the keyframe interval, so the first picture takes about 4.5 s with 2 s keyframes and 20 to 30 s with 10 s keyframes. The RTSP URL isn't affected.
 * **Alerts** (`RTSPM_ALERT_WEBHOOK_URL`): stream errors, lost source files, stalls, MediaMTX down/up, boot recovery result, new resource warnings. Rate-limited per (kind, stream).
 * **Prometheus** `/api/metrics`; **bitrate** per stream (ingest/egress from MediaMTX byte counters) and total egress, with a warning above `RTSPM_NET_WARN_MBPS`.
 * **Availability** per stream (24 h timeline); live preview thumbnails taken from the source file at the current playback position (no RTSP reader, so viewer counts stay accurate).

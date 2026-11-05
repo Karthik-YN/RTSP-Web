@@ -3,7 +3,7 @@
 #   1. backend test suite on Debian 12 (FFmpeg 5.1) and Ubuntu 24.04 (FFmpeg 6.1)
 #   2. scripts/install.sh inside a systemd container, then health check + a real stream
 #
-#   scripts/test_linux.sh [tests|install|tls|all]     (default: all)
+#   scripts/test_linux.sh [tests|install|tls|launcher|all]     (default: all)
 # Requires Docker. Test fixtures are generated on the host first.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -77,10 +77,48 @@ run_install_tls() {
     echo TLS-INSTALL-PASSED'
 }
 
+run_launcher() {
+  echo "=== python3 app.py on a clean Debian 12 machine (only Python + FFmpeg installed)"
+  docker build -q -f deployment/test/Dockerfile.launcher -t rig02-launcher . >/dev/null
+  docker rm -f rig02-la >/dev/null 2>&1 || true
+  docker run -d --name rig02-la rig02-launcher >/dev/null
+  trap 'docker rm -f rig02-la >/dev/null 2>&1 || true' EXIT
+  echo "--- terminal 1: first run"
+  docker exec rig02-la python3 app.py | tee /tmp/rig02-la.log
+  PW=$(grep -oE "First login:  admin / [^ ]+" /tmp/rig02-la.log | awk '{print $5}')
+  echo "--- terminal 2 (terminal 1 is closed): a colleague runs it"
+  docker exec rig02-la python3 app.py
+  docker exec rig02-la python3 app.py status
+  docker exec -e PW="$PW" rig02-la bash -c '
+    set -e
+    A="-u admin:$PW"; H=http://127.0.0.1:8080
+    F=tests/.fixtures/h264_2997.mp4; SIZE=$(stat -c%s $F)
+    echo "--- upload through the API"
+    curl -fs $A -H "Content-Type: application/json" -X POST $H/api/videos/upload/check -d "{\"filename\":\"clip.mp4\",\"size\":$SIZE}" >/dev/null
+    VID=$(curl -fs $A -H "Content-Type: application/octet-stream" --data-binary @$F "$H/api/videos/upload?filename=clip.mp4" | python3 -c "import json,sys; v=json.load(sys.stdin); print(v[\"id\"])")
+    echo "uploaded video $VID"
+    curl -fs $A -H "Content-Type: application/json" -X POST "$H/api/streams?wait=true" \
+      -d "{\"name\":\"cam1\",\"video_id\":$VID,\"start\":\"00:00:02\",\"end\":\"00:00:10\"}" | python3 -c "import json,sys; s=json.load(sys.stdin); print(\"stream:\", s[\"name\"], s[\"status\"], s[\"rtsp_url\"]); assert s[\"status\"]==\"RUNNING\""
+    echo "--- read the RTSP stream"
+    ffprobe -v error -rtsp_transport tcp -read_intervals %+3 -select_streams v:0 -show_entries packet=pts_time -of csv=p=0 rtsp://127.0.0.1:8554/cam1 | wc -l
+    echo "--- live preview"
+    curl -fs -L $A $H/api/streams/1/live/index.m3u8 | head -1
+    curl -fs $A $H/ | grep -c "<div id=\"root\">"
+  '
+  echo "--- restart: the stream comes back"
+  docker exec rig02-la python3 app.py restart | tail -3
+  sleep 4
+  docker exec -e PW="$PW" rig02-la bash -c 'curl -fs -u admin:$PW http://127.0.0.1:8080/api/streams | python3 -c "import json,sys; s=json.load(sys.stdin)[0]; print(\"after restart:\", s[\"name\"], s[\"status\"]); assert s[\"status\"]==\"RUNNING\""'
+  docker exec rig02-la python3 app.py stop
+  docker exec rig02-la python3 app.py status || echo "(status correctly reports not running)"
+  echo LAUNCHER-TEST-PASSED
+}
+
 case "$WHAT" in
   tests) run_tests debian:12 debian12; run_tests ubuntu:24.04 ubuntu2404 ;;
   install) run_install ;;
   tls) run_install_tls ;;
-  all) run_tests debian:12 debian12; run_tests ubuntu:24.04 ubuntu2404; run_install; run_install_tls ;;
-  *) echo "usage: $0 [tests|install|tls|all]"; exit 2 ;;
+  launcher) run_launcher ;;
+  all) run_tests debian:12 debian12; run_tests ubuntu:24.04 ubuntu2404; run_install; run_install_tls; run_launcher ;;
+  *) echo "usage: $0 [tests|install|tls|launcher|all]"; exit 2 ;;
 esac

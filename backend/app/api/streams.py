@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 
-from ..models import Stream, Video
+from ..models import Stream, StreamStatus, Video
 from ..schemas import LogsOut, StreamCreate, StreamDetailOut, StreamOut, StreamUpdate, StreamValidateOut
 from ..services.auth import User
 from ..services.errors import Invalid, ServiceError
@@ -20,6 +22,7 @@ from .videos import video_out
 router = APIRouter(prefix="/api/streams", tags=["streams"])
 
 _snapshot_sem = asyncio.Semaphore(2)
+_HLS_FILE = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 
 
 def _proc_index(ctx: Context) -> dict[int, dict]:
@@ -231,6 +234,33 @@ async def preview(stream_id: int, ctx: Context = Depends(get_ctx), _: User = Dep
             raise HTTPException(503, f"No preview: {exc}")
     _preview_cache[stream_id] = (_t.monotonic(), data)
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=20"})
+
+
+@router.get("/{stream_id}/live/{file}")
+async def live_preview(stream_id: int, file: str, request: Request, ctx: Context = Depends(get_ctx),
+                       _: User = Depends(current_user)):
+    """HLS files of a stream for the dashboard's live preview.
+
+    Proxies MediaMTX's loopback-only HLS server, so the preview needs no extra
+    open port and sits behind the dashboard login.
+    """
+    if not _HLS_FILE.fullmatch(file):
+        raise HTTPException(404, "Not found")
+    row = ctx.supervisor.get_row(stream_id)
+    if row.status != StreamStatus.RUNNING:
+        raise HTTPException(409, "The stream is not live.")
+    url = f"{ctx.settings.mediamtx_hls_url.rstrip('/')}/{row.name}/{file}"
+    try:
+        # follow_redirects: MediaMTX answers the first request with a cookie-check 302.
+        # The first playlist is held until 3 segments exist; a segment can't be shorter
+        # than the keyframe interval, so 10 s keyframes take about 30 s.
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            r = await client.get(url, params=dict(request.query_params))
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, f"Preview unavailable: {type(exc).__name__}")
+    headers = {"Cache-Control": "no-store"}
+    return Response(r.content, status_code=r.status_code, headers=headers,
+                    media_type=r.headers.get("content-type", "application/octet-stream"))
 
 
 @router.get("/{stream_id}/snapshot")

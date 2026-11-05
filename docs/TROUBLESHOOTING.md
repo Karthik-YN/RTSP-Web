@@ -32,6 +32,8 @@ Start with `scripts/healthcheck.sh --rtsp` on the server and the **Events** tab 
 | Upload says "connection lost, retrying" | Wi-Fi dropped; the upload resumes from the last received byte | Nothing to do; after ~2 min of failures it gives up and keeps nothing |
 | `install.sh --upgrade-mediamtx` says "exposes extra ports" and restored the previous binary | The new MediaMTX enables a new server by default | Add `<server>: no` for it to `/etc/mediamtx/mediamtx.yml`, then retry |
 
+| Live preview stays on "Connecting" | Normal for up to ~30 s with long keyframe intervals. If it never starts on an upgraded server, `/etc/mediamtx/mediamtx.yml` is the old one (the installer never overwrites it) | Compare with `mediamtx.yml.rig02-new`, add the `hls` settings, `sudo systemctl restart mediamtx` |
+
 ## Useful commands
 
 ```bash

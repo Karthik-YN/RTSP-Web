@@ -37,19 +37,20 @@ class Rig:
         if ports_file.exists():
             self.ports = json.loads(ports_file.read_text())
         else:
-            self.ports = {"rtsp": free_port(), "api": free_port(), "metrics": free_port()}
+            self.ports = {"rtsp": free_port(), "api": free_port(), "metrics": free_port(), "hls": free_port()}
             ports_file.write_text(json.dumps(self.ports))
         self.video_dir = base / "videos"
         for v in videos:
             link_or_copy(FIXTURES / v, self.video_dir / v)
         cfg_path = base / "mediamtx.yml"
         cfg_path.write_text(mediamtx_config(self.ports["rtsp"], self.ports["api"], self.ports["metrics"],
-                                            hold_s=overrides.pop("hold_s", 60)))
+                                            hold_s=overrides.pop("hold_s", 60), hls_port=self.ports["hls"]))
         params = dict(
             data_dir=base / "data", video_dir=self.video_dir,
             public_rtsp_host="rig.test", public_rtsp_port=self.ports["rtsp"],
             publish_rtsp_base=f"rtsp://127.0.0.1:{self.ports['rtsp']}",
             mediamtx_api_url=f"http://127.0.0.1:{self.ports['api'] if mediamtx else free_port()}",
+            mediamtx_hls_url=f"http://127.0.0.1:{self.ports['hls']}",
             mediamtx_control="process" if mediamtx else "external",
             mediamtx_config=cfg_path, mediamtx_bin="mediamtx",
             health_interval_s=1.0, health_fail_threshold=2, startup_timeout_s=15,

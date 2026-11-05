@@ -6,6 +6,7 @@
 #   :8554/tcp  RTSP           office network (readers: edge, VLC, ffprobe)
 #   127.0.0.1:9997  Control API   local only (backend health + inspection)
 #   127.0.0.1:9998  Prometheus    local only
+#   127.0.0.1:8888  HLS           local only (dashboard preview, via the backend)
 # Publishing is only allowed from this machine (the backend's FFmpeg).
 ###############################################################################
 
@@ -65,10 +66,22 @@ rtspAuthMethods: [basic]
 # :8892/:8893). After upgrading MediaMTX, check `ss -lntup` (or
 # scripts/healthcheck.sh) that only :8554 is reachable from the network.
 rtmp: no
-hls: no
 webrtc: no
 srt: no
 moq: no
+
+###############################################################################
+# HLS: browsers cannot play RTSP, so the dashboard's live preview uses HLS.
+# Bound to loopback; the backend proxies it behind the dashboard login, so no
+# extra port is exposed. Same H.264 as the RTSP stream (no re-encoding), and
+# only generated while someone is watching a preview.
+hls: yes
+hlsAddress: 127.0.0.1:8888
+hlsVariant: fmp4
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+# Must exceed the time to build the first 3 segments (3 x the keyframe interval)
+hlsMuxerCloseAfter: 60s
 
 ###############################################################################
 # Paths

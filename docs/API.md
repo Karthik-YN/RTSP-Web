@@ -48,6 +48,7 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | GET | `/api/streams/{id}/logs?lines=20` | Log tail (1–200 lines) |
 | GET | `/api/streams/{id}/snapshot` | One JPEG frame read back over RTSP (end-to-end check; counts as a reader briefly) |
 | GET | `/api/streams/{id}/preview` | Thumbnail of the current playback position, from the source file (no RTSP reader); cached 20 s |
+| GET | `/api/streams/{id}/live/{file}` | Live preview: HLS playlist and segments (`index.m3u8`) proxied from MediaMTX's loopback HLS server, behind the dashboard login; 409 unless the stream is live |
 | GET | `/api/streams/{id}/history?hours=24` | Status segments and `running_percent` (availability) |
 | POST | `/api/streams/bulk` `{stream_ids, action}` | start/stop/restart/delete many; result per stream (protected ones are reported, not changed) |
 | GET/POST | `/api/groups` · DELETE `/api/groups/{id}` | Stream groups ("demo sets"); deleting a group keeps its streams |

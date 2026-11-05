@@ -7,11 +7,35 @@ Video file ─▶ Web dashboard ─▶ FastAPI backend ─▶ FFmpeg publisher (
 ```
 
 * **Library:** browser upload (streamed, disk-checked) or copy files into `/data/rtsp-manager/videos`. FFprobe metadata, thumbnail, compatibility verdict.
-* **Streams:** unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers, the FFmpeg command and the last 20 log lines.
+* **Streams:** unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x, live video preview in the dashboard. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers, the FFmpeg command and the last 20 log lines.
 * **Monitoring:** CPU, RAM, disk, capacity, viewers; MediaMTX health (down detected in ≤ 5 s) with automatic restart and republishing.
 * **Codecs:** H.264 8-bit is stream-copied; H.265/VP9/AV1/10-bit are transcoded to H.264 (with a CPU warning) or refused, per policy. Audio is always dropped.
 * **Teams:** roles (admin/operator/viewer), protected streams with owner notes, groups ("demo sets") with start/stop all and URL export, bulk actions, clone, audit log.
 * **Operations:** streams keep playing through backend restarts and upgrades; HTTPS option; nightly backups; webhook alerts (Teams/Slack); Prometheus metrics; per-stream availability and bitrate; resumable uploads; light/dark UI.
+
+## Quick start: `python3 app.py`
+
+Copy this folder to the server (or any Linux/macOS machine), then:
+
+```bash
+sudo apt-get install -y python3-venv ffmpeg   # once; on macOS: brew install ffmpeg
+cd rtsp-stream-manager
+python3 app.py
+```
+
+The first run prepares everything (Python packages, MediaMTX, the first admin login, which it prints) and starts the app **in the background**, so it keeps running after you close the terminal. Open the address it shows. Anyone who runs it later just gets the address. Videos, streams and users are kept in `storage/`.
+
+| Command | Does |
+|---|---|
+| `python3 app.py` | Start if needed, show the address (opens the browser on a desktop) |
+| `python3 app.py status` | Is it running, and where |
+| `python3 app.py logs` | Last log lines |
+| `python3 app.py restart` | Restart; streams that should run come back |
+| `python3 app.py stop` | Stop the app **and every stream** |
+
+Options: `--port 8090`, `--host rig02.example` (the address shown in RTSP URLs; by default this machine's network address), `--foreground`. Settings can go in a `.env` file here (see `.env.example`).
+
+For a permanent installation (starts on boot, HTTPS, hardened services, backups), use the installer below. `python3 app.py` then simply shows the running service's address.
 
 ## Install on a fresh Proxmox VM (Debian 12 / Ubuntu 24.04)
 
@@ -51,7 +75,7 @@ Details, network/firewall, LXC notes and recovery verification are in **[docs/DE
 ```bash
 cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ..
 cd frontend && npm ci && npm run build && cd ..          # Node ≥ 18
-scripts/start.sh                                         # http://localhost:8080 (starts its own MediaMTX, auth off)
+python3 app.py --foreground                              # or scripts/start.sh (auth off) for development
 # UI hot reload: (cd frontend && npm run dev)           # http://localhost:5173, proxies /api to :8080
 ```
 

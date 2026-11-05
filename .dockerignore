@@ -11,3 +11,4 @@ tests/.fixtures/perf_*
 tests/.fixtures/large_*
 tests/.fixtures/_chunk*
 .claude
+bin
