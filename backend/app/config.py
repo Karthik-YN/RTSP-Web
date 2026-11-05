@@ -152,7 +152,8 @@ class Settings(BaseSettings):
     trash_days: float = 7.0  # deleted videos stay in <video_dir>/.trash this long
 
     # ------------------------------------------------------------------ auth
-    auth_enabled: bool = True
+    # Off: direct access for everyone on the network, no login. On: users, roles, protected streams.
+    auth_enabled: bool = False
     users_file: Path | None = None  # default: <data_dir>/users
     secret_key: str | None = None  # default: generated into <data_dir>/secret_key
     session_hours: float = 12.0

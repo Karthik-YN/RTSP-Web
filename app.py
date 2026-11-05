@@ -12,8 +12,8 @@ Options: --port 8080, --host <address shown in RTSP URLs>, --foreground, --no-br
 The app keeps running after the terminal closes, so streams don't depend on
 whoever started it. Anyone else who runs this finds it running and just gets the
 URL. The first start prepares what is missing: a Python environment in
-backend/.venv, MediaMTX in bin/ (checksum-verified download) and the first admin
-account. Settings can go in a .env file next to this one (see .env.example).
+backend/.venv and MediaMTX in bin/ (checksum-verified download). There is no
+login by default. Settings can go in a .env file here (see .env.example).
 
 Uses only the standard library, so it runs before anything is installed.
 """
@@ -240,7 +240,7 @@ def ensure_frontend() -> None:
 def ensure_admin(env: dict[str, str]) -> None:
     """Create the first admin on a fresh install; the login goes in a private file."""
     users = Path(env["RTSPM_DATA_DIR"]) / "users"
-    if env.get("RTSPM_AUTH_ENABLED", "true").lower() != "true" or (users.exists() and users.stat().st_size > 0):
+    if env.get("RTSPM_AUTH_ENABLED", "false").lower() != "true" or (users.exists() and users.stat().st_size > 0):
         return
     password = secrets.token_urlsafe(12)
     r = subprocess.run([str(VENV_PY), str(ROOT / "scripts" / "manage_users.py"), "add", "admin", "--role", "admin",
@@ -269,7 +269,7 @@ def backend_env(args: argparse.Namespace, mediamtx: str) -> dict[str, str]:
         "RTSPM_PUBLIC_RTSP_HOST": lan_ip(),
         "RTSPM_MEDIAMTX_BIN": mediamtx,
         "RTSPM_MEDIAMTX_CONFIG": str(ROOT / "deployment" / "mediamtx.yml"),
-        "RTSPM_AUTH_ENABLED": "true",
+        "RTSPM_AUTH_ENABLED": "false",
         "RTSPM_SETTLE_SECONDS": "5",
     }
     for key, value in defaults.items():

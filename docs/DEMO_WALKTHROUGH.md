@@ -116,18 +116,9 @@ If it times out, the Wi-Fi is probably blocking laptop-to-laptop traffic. Use a 
 
 If you have a real store recording with a burnt-in clock, add it. Real footage lands better than test patterns.
 
-**3. Create accounts.** In the dashboard, sign in as `admin` (password in `storage/data/dev-credentials.txt`), open **Users**, and add:
+**3. Install VLC** on your laptop and ask attendees to have it ready.
 
-| User | Role | For |
-|---|---|---|
-| `demo` | `viewer` | Everyone in the room, read-only and safe to share |
-| `tester1` | `operator` | One colleague who will take part live |
-
-Note: after 5 wrong passwords a user is locked out for 30 seconds or more, and shared accounts make that more likely. Write the password on the screen rather than saying it aloud.
-
-**4. Install VLC** on your laptop and ask attendees to have it ready.
-
-**5. Rehearse Part 4 once from start to finish.** Time it.
+**4. Rehearse Part 4 once from start to finish.** Time it.
 
 ### 15 minutes before
 
@@ -141,7 +132,6 @@ caffeinate -d
 
 ```bash
 cd /Users/karthiknandakumar/rtsp-stream-manager
-RTSPM_AUTH_ENABLED=true \
 RTSPM_PUBLIC_RTSP_HOST=192.168.68.116 \
 RTSPM_DISK_RESERVE_PERCENT=1 \
 RTSPM_MEM_WARN_PERCENT=95 \
@@ -150,7 +140,6 @@ scripts/start.sh
 
 | Setting | Why |
 |---|---|
-| `RTSPM_AUTH_ENABLED=true` | Login on, so roles can be shown |
 | `RTSPM_PUBLIC_RTSP_HOST` | Copied URLs use your IP, so they work on other laptops |
 | `RTSPM_DISK_RESERVE_PERCENT=1`, `RTSPM_MEM_WARN_PERCENT=95` | Hide the disk and memory warning banners your Mac would otherwise show. Laptop-only: don't use these on the server |
 
@@ -180,10 +169,10 @@ Show the architecture diagram from Part 1 for 30 seconds. Don't go deeper yet.
 
 ### 2. Tour of the dashboard (2 min)
 
-Sign in as `admin`. You land on **Streams**, with the getting-started guide.
+Open the dashboard: there's no login, and you land on **Streams** with the getting-started guide.
 
 - Point to the top bar: "All systems normal", CPU, RAM, disk, stream capacity.
-- Point to the sidebar: Streams, Video library, Events, Users.
+- Point to the sidebar: Streams, Video library, Events.
 
 ### 3. The video library (3 min)
 
@@ -218,7 +207,7 @@ If you have the portal open, add it as a camera now (see `docs/EDGE_VALIDATION.m
 Put this on the screen:
 
 ```
-Dashboard:  http://<your-ip>:8080     user: demo   password: <password>
+Dashboard:  http://<your-ip>:8080
 Stream:     rtsp://<your-ip>:8554/store_entrance   (VLC → Open Network Stream)
 ```
 
@@ -226,7 +215,7 @@ Give people a minute. Then show:
 
 - The **Viewers** tile rising as people connect.
 - Click the stream card, open the **Viewers** tab: each person's address appears.
-- "`demo` is a viewer account: they can see everything and copy URLs, but the buttons to change things aren't there."
+- "There's no login: anyone on the network has full access, so please don't press Stop or Delete on someone else's stream."
 
 Each viewer costs about 3 Mbit/s for this clip. A room of 20 on the same Wi-Fi is about 60 Mbit/s, so if playback stutters, ask a few people to close VLC.
 
@@ -246,10 +235,9 @@ Open the stream page and walk through:
 
 ### 7. Working together safely (3 min)
 
-- On the `store_entrance` page, in **Ownership & note**, type "Client demo until 17:00", **Save note**, and tick **Protect (only me or an admin)**.
-- Ask your colleague, signed in as `tester1`, to try stopping it. The lock shows, and it can't be changed.
+- On the `store_entrance` page, in **Note**, type "Client demo until 17:00, please don't stop", and **Save note**. It shows on the card for everyone.
 - Stop the second stream yourself, and click **Undo** in the message that appears.
-- Open **Events**: every action with who did it and when.
+- Open **Events**: every action and when it happened.
 
 > "Two people can't create the same name, and if someone changes a stream while you're looking at an old view, the server refuses rather than overwriting it."
 
@@ -310,7 +298,7 @@ mediamtx /Users/karthiknandakumar/rtsp-stream-manager/deployment/mediamtx.yml
 ```bash
 # terminal 2
 cd /Users/karthiknandakumar/rtsp-stream-manager
-RTSPM_MEDIAMTX_CONTROL=external RTSPM_AUTH_ENABLED=true RTSPM_PUBLIC_RTSP_HOST=192.168.68.116 scripts/start.sh
+RTSPM_MEDIAMTX_CONTROL=external RTSPM_PUBLIC_RTSP_HOST=192.168.68.116 scripts/start.sh
 ```
 
 Press Ctrl+C in terminal 2 while VLC plays: the stream continues with no backend at all. Start it again: the dashboard reconnects and the stream shows the same process ID. In this mode the MediaMTX-kill demo won't self-heal, because nothing manages MediaMTX, so pick one or the other on the Mac. On the VM both work.
@@ -336,7 +324,6 @@ Stay calm and say what you're doing. Recovering live is itself a demo.
 | VLC stops after the kill demo | Press Play again |
 | Video stutters for everyone | Too many viewers on the Wi-Fi. Ask people to close VLC |
 | A stream stays on Restarting | Open it → **Logs**, which usually names the cause. Then **Restart** |
-| Wrong password lockout | Wait 30 seconds, or restart `start.sh` (lockouts are held in memory) |
 | New file doesn't appear in the library | Files are held back about 5 seconds after copying. Press **Refresh** again |
 | Everything is broken | Switch to the backup: screenshots or a screen recording of your rehearsal. Make one when you rehearse |
 
@@ -363,10 +350,10 @@ That's the design: anything that should be running comes back, stopped stays sto
 It's always dropped, as the ticket requires.
 
 **Can someone stop my stream during a client demo?**
-Not if you tick Protect. Only you or an admin can then change it.
+Yes: there's no login, so anyone on the network can. Leave a note on the stream to tell people it's in use. If that ever becomes a problem, one setting (`RTSPM_AUTH_ENABLED=true`) turns on accounts, roles and protected streams.
 
 **Can it delete my video files?**
-Deleting a stream never touches the video. Only admins can delete videos, not while a stream uses them, and files sit in a trash folder for 7 days first.
+Deleting a stream never touches the video. Videos can't be deleted while a stream uses them, and deleted files sit in a trash folder for 7 days first.
 
 **What if the disk fills up?**
 Uploads are refused before copying, showing the space needed and available. Files copied in directly over the network bypass that check, so keep an eye on the disk warning.
@@ -388,7 +375,6 @@ Once every 7 days at most, when its playlist runs out and a fresh publisher star
 
 - Delete the demo streams, and `demo_copy.mp4` if it's still there.
 - Stop `caffeinate` with Ctrl+C.
-- Change or delete the `demo` account's password if it was shown on screen.
 
 **Collect**
 

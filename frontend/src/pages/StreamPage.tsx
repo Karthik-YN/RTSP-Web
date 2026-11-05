@@ -48,7 +48,7 @@ export function StreamPage() {
               <h1 className="font-mono text-2xl font-bold">{s.name}</h1>
               <StatusBadge status={s.status} title={s.status_detail} />
               {s.output_mode === "transcode" && <Pill tone="warn">H.264 transcode</Pill>}
-              {s.protected && <Pill tone="info"><LockIcon className="h-3 w-3" /> protected</Pill>}
+              {s.protected && rig.user.auth_enabled && <Pill tone="info"><LockIcon className="h-3 w-3" /> protected</Pill>}
             </div>
             <p className="mt-1 text-sm text-muted">
               {s.source_rel_path} · {formatTime(s.effective_start_s, false)} → {s.end_offset_s !== null ? formatTime(s.effective_end_s, false) : "end"} ·{" "}
@@ -114,7 +114,7 @@ export function StreamPage() {
               <KV k="Requested start / end" v={`${formatTime(s.start_offset_s)} / ${s.end_offset_s !== null ? formatTime(s.end_offset_s) : "end of file"}`} />
               <KV k="Effective (keyframes)" v={`${formatTime(s.effective_start_s)} → ${formatTime(s.effective_end_s)}`} />
               <KV k="Mode" v={`${s.playback_mode === "loop" ? "Loop" : "Play once"} · ${s.playback_speed}x · ${s.output_mode === "copy" ? "stream copy" : "H.264 transcode"}`} />
-              <KV k="Last change" v={`${s.updated_by ?? "?"} · ${new Date(s.updated_at).toLocaleString()} (v${s.version})`} />
+              <KV k="Last change" v={`${rig.user.auth_enabled ? `${s.updated_by ?? "?"} · ` : ""}${new Date(s.updated_at).toLocaleString()}`} />
             </Panel>
             <Panel title="FFmpeg command">
               {s.ffmpeg_command_text ? (
@@ -233,18 +233,20 @@ function MetaPanel({ s, onSaved }: { s: StreamDetail; onSaved: () => void }) {
     }
   };
   return (
-    <Panel title="Ownership & note">
-      <div className="flex items-center gap-2 text-sm">
-        <Avatar name={s.owner} size="md" />
-        <div><div className="font-medium">{s.owner ?? "unknown"}</div><div className="text-xs text-muted">created {new Date(s.created_at).toLocaleDateString()}</div></div>
-      </div>
-      <label className="label mt-3" htmlFor="note">Note for colleagues</label>
+    <Panel title={user.auth_enabled ? "Ownership & note" : "Note"}>
+      {user.auth_enabled && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <Avatar name={s.owner} size="md" />
+          <div><div className="font-medium">{s.owner ?? "unknown"}</div><div className="text-xs text-muted">created {new Date(s.created_at).toLocaleDateString()}</div></div>
+        </div>
+      )}
+      <label className="label" htmlFor="note">Note for colleagues</label>
       <textarea id="note" className="input min-h-[4rem]" placeholder="e.g. Client demo until 17:00, please don't stop"
         value={note} onChange={(e) => setNote(e.target.value)} disabled={!can} maxLength={500} />
       {can && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button className="btn-secondary btn-xs" disabled={saving || note === (s.note ?? "")} onClick={() => save({ note })}>Save note</button>
-          {isOwner && (
+          {isOwner && user.auth_enabled && (
             <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs">
               <input type="checkbox" checked={s.protected} disabled={saving} onChange={(e) => save({ protected: e.target.checked })} />
               <LockIcon className="h-3.5 w-3.5" /> Protect (only me or an admin)

@@ -27,19 +27,18 @@ run_install() {
   [[ -n "${KEEP:-}" ]] || trap "docker rm -f rig02-sd >/dev/null 2>&1 || true" EXIT
   for _ in $(seq 30); do docker exec rig02-sd systemctl is-system-running 2>/dev/null | grep -qE "running|degraded" && break; sleep 1; done
   docker exec rig02-sd bash -c "cd /src && scripts/install.sh --host rig02.test" | tee /tmp/rig02-install.log
-  PW=$(grep -oE "admin / [^ ]+" /tmp/rig02-install.log | awk '{print $3}')
   docker exec rig02-sd cp /src/tests/.fixtures/h264_2997.mp4 /data/rtsp-manager/videos/
   docker exec rig02-sd chown rtspmgr:rtspmgr /data/rtsp-manager/videos/h264_2997.mp4
-  docker exec -e PW="$PW" rig02-sd bash -c '
+  docker exec rig02-sd bash -c '
     set -e
-    A="-u admin:$PW"; H=http://127.0.0.1:8080
+    A=""; H=http://127.0.0.1:8080
     curl -fs $A -X POST $H/api/videos/refresh >/dev/null   # first scan sees a fresh copy: "settling"
     sleep 11
     curl -fs $A -X POST $H/api/videos/refresh >/dev/null
     VID=$(curl -fs $A $H/api/videos | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])")
     curl -fs $A -H "Content-Type: application/json" -X POST "$H/api/streams?wait=true" \
       -d "{\"name\":\"linux_check\",\"video_id\":$VID,\"start\":\"00:00:02\",\"end\":\"00:00:10\"}" | python3 -c "import json,sys; s=json.load(sys.stdin); print(\"stream:\", s[\"name\"], s[\"status\"]); assert s[\"status\"]==\"RUNNING\""
-    RTSPM_USER=admin RTSPM_PASSWORD=$PW /opt/rtsp-manager/scripts/healthcheck.sh --rtsp
+    /opt/rtsp-manager/scripts/healthcheck.sh --rtsp
     echo "--- backend restart: publisher keeps running and is re-adopted"
     PID1=$(curl -fs $A $H/api/streams | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"pid\"])")
     systemctl restart rtsp-manager; sleep 6
@@ -65,15 +64,21 @@ run_install_tls() {
   trap 'docker rm -f rig02-tls >/dev/null 2>&1 || true' EXIT
   for _ in $(seq 30); do docker exec rig02-tls systemctl is-system-running 2>/dev/null | grep -qE "running|degraded" && break; sleep 1; done
   docker exec rig02-tls bash -c "cd /src && scripts/install.sh --host rig02.test --with-nginx --tls self-signed" > /tmp/rig02-tls.log 2>&1
-  PW=$(grep -oE "admin / [^ ]+" /tmp/rig02-tls.log | awk '{print $3}')
   grep -E "Dashboard|self-signed|WARN" /tmp/rig02-tls.log
-  docker exec -e PW="$PW" rig02-tls bash -c '
+  docker exec rig02-tls bash -c '
     set -e
     curl -fsk https://127.0.0.1/api/health; echo
     echo "redirect: $(curl -s -o /dev/null -w "%{http_code} -> %{redirect_url}" http://127.0.0.1/)"
-    BODY=$(printf "{\"username\":\"admin\",\"password\":\"%s\"}" "$PW")
-    curl -sk -D - -o /dev/null -H "Content-Type: application/json" -X POST https://127.0.0.1/api/auth/login -d "$BODY" \
-      | grep -i "^set-cookie" | grep -qi "secure" && echo "session cookie is Secure" || { echo "FAIL: cookie not Secure"; exit 1; }
+    curl -s -m 3 http://$(hostname -i | cut -d" " -f1):8080/api/health && { echo "FAIL: backend reachable directly"; exit 1; } || echo "backend :8080 not reachable from the network (loopback only)"
+    curl -fsk https://127.0.0.1/api/streams >/dev/null && echo "direct access works, no login"
+    cp /src/tests/.fixtures/h264_2997.mp4 /data/rtsp-manager/videos/ && chown rtspmgr:rtspmgr /data/rtsp-manager/videos/h264_2997.mp4
+    H=https://127.0.0.1
+    curl -fsk -X POST $H/api/videos/refresh >/dev/null; sleep 11; curl -fsk -X POST $H/api/videos/refresh >/dev/null
+    VID=$(curl -fsk $H/api/videos | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])")
+    curl -fsk -H "Content-Type: application/json" -X POST "$H/api/streams?wait=true" -d "{\"name\":\"tls_check\",\"video_id\":$VID}" >/dev/null
+    M=$(curl -fsk $H/api/streams/1/live/index.m3u8); echo "$M" | head -1
+    V=$(echo "$M" | grep -v "^#" | grep . | head -1)
+    curl -fsk "$H/api/streams/1/live/$V" | grep -q EXTINF && echo "live preview works over HTTPS through nginx"
     echo TLS-INSTALL-PASSED'
 }
 
@@ -85,13 +90,12 @@ run_launcher() {
   trap 'docker rm -f rig02-la >/dev/null 2>&1 || true' EXIT
   echo "--- terminal 1: first run"
   docker exec rig02-la python3 app.py | tee /tmp/rig02-la.log
-  PW=$(grep -oE "First login:  admin / [^ ]+" /tmp/rig02-la.log | awk '{print $5}')
   echo "--- terminal 2 (terminal 1 is closed): a colleague runs it"
   docker exec rig02-la python3 app.py
   docker exec rig02-la python3 app.py status
-  docker exec -e PW="$PW" rig02-la bash -c '
+  docker exec rig02-la bash -c '
     set -e
-    A="-u admin:$PW"; H=http://127.0.0.1:8080
+    A=""; H=http://127.0.0.1:8080
     F=tests/.fixtures/h264_2997.mp4; SIZE=$(stat -c%s $F)
     echo "--- upload through the API"
     curl -fs $A -H "Content-Type: application/json" -X POST $H/api/videos/upload/check -d "{\"filename\":\"clip.mp4\",\"size\":$SIZE}" >/dev/null
@@ -108,7 +112,7 @@ run_launcher() {
   echo "--- restart: the stream comes back"
   docker exec rig02-la python3 app.py restart | tail -3
   sleep 4
-  docker exec -e PW="$PW" rig02-la bash -c 'curl -fs -u admin:$PW http://127.0.0.1:8080/api/streams | python3 -c "import json,sys; s=json.load(sys.stdin)[0]; print(\"after restart:\", s[\"name\"], s[\"status\"]); assert s[\"status\"]==\"RUNNING\""'
+  docker exec rig02-la bash -c 'curl -fs http://127.0.0.1:8080/api/streams | python3 -c "import json,sys; s=json.load(sys.stdin)[0]; print(\"after restart:\", s[\"name\"], s[\"status\"]); assert s[\"status\"]==\"RUNNING\""'
   docker exec rig02-la python3 app.py stop
   docker exec rig02-la python3 app.py status || echo "(status correctly reports not running)"
   echo LAUNCHER-TEST-PASSED

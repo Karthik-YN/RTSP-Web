@@ -5,7 +5,7 @@
 #
 # Uses ./storage for videos/data and launches its own MediaMTX (process
 # mode) with deployment/mediamtx.yml, unless RTSPM_MEDIAMTX_CONTROL is set.
-# Authentication is disabled unless RTSPM_AUTH_ENABLED=true.
+# There is no login unless RTSPM_AUTH_ENABLED=true.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/backend"

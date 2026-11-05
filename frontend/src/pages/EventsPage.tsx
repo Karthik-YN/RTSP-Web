@@ -44,7 +44,7 @@ export function EventsPage() {
                 <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${LEVEL[e.level] ?? LEVEL.INFO}`}>{e.kind}</span>
                 {e.stream_name && <span className="font-mono text-xs font-semibold">{e.stream_name}</span>}
                 <span className="min-w-0 flex-1">{e.message}</span>
-                {e.username && <span className="text-xs text-muted">by {e.username}</span>}
+                {e.username && e.username !== "anonymous" && <span className="text-xs text-muted">by {e.username}</span>}
               </li>
             ))}
             {rows.length === 0 && <li className="p-8 text-center text-sm text-muted">No events match.</li>}

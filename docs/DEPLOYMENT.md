@@ -114,7 +114,7 @@ What `install.sh` does (idempotent; re-run it to upgrade):
 6. checks that this MediaMTX binary with our config exposes **only RTSP** (`scripts/check_mediamtx_exposure.py`); on `--upgrade-mediamtx` a failing new binary is rolled back automatically;
 7. installs `/etc/mediamtx/mediamtx.yml`, `/etc/systemd/system/{mediamtx,rtsp-manager}.service` and `/etc/polkit-1/rules.d/50-rtsp-manager.rules`. **An existing file that differs is never overwritten**: ours is written as `*.rig02-new` and a warning is printed. Review it with `diff -u`;
 8. writes `/etc/rtsp-manager/rtsp-manager.env` from `.env.example` with your host (only if missing);
-9. creates the first account `admin` (role **admin**) with a random password, **printed once** to your terminal (never logged);
+9. leaves login off (direct access for everyone who can reach the server);
 10. enables both services and the nightly backup timer, starts them, then runs `scripts/healthcheck.sh`.
 
 **If MediaMTX is already installed for something else**, the installer keeps its binary and config. Our config is only written as `.rig02-new`. Decide with the owner of that service before replacing anything.
@@ -128,20 +128,15 @@ Edit `/etc/rtsp-manager/rtsp-manager.env` (all variables are documented in `.env
 * `RTSPM_TRANSCODE_POLICY`, `RTSPM_COPY_*`: edge compatibility; set them from the edge validation.
 * `RTSPM_LISTEN_HOST=127.0.0.1`: when nginx is in front.
 
-### Users and roles
+### Access
 
-| Role | Can |
-|---|---|
-| `admin` | everything, incl. the Users page and other people's **protected** streams, deleting videos |
-| `operator` | create/start/stop/delete streams (except others' protected ones), upload videos |
-| `viewer` | read-only: see streams, copy URLs |
+By default there is **no login**: anyone who can reach the server has full access, including stopping and deleting streams, deleting videos and restarting MediaMTX. Keep the server on the office network only; don't forward it to the internet.
 
-Admins manage users in the dashboard (**Users** page). Everyone can change their own password (user menu). The command line also works:
+To require logins later, set `RTSPM_AUTH_ENABLED=true` in `/etc/rtsp-manager/rtsp-manager.env`, create the first admin, and restart. That also brings back roles (admin, operator, viewer), the Users page and protected streams:
 
 ```bash
-sudo -u rtspmgr /opt/rtsp-manager/backend/.venv/bin/python /opt/rtsp-manager/scripts/manage_users.py add alice --role operator
-sudo -u rtspmgr /opt/rtsp-manager/backend/.venv/bin/python /opt/rtsp-manager/scripts/manage_users.py add viewer1 --role viewer
-sudo -u rtspmgr /opt/rtsp-manager/backend/.venv/bin/python /opt/rtsp-manager/scripts/manage_users.py list
+sudo -u rtspmgr env RTSPM_ENV_FILE=/dev/null RTSPM_DATA_DIR=/var/lib/rtsp-manager /opt/rtsp-manager/backend/.venv/bin/python /opt/rtsp-manager/scripts/manage_users.py add admin --role admin
+sudo systemctl restart rtsp-manager
 ```
 
 ## 5. Operate
@@ -175,7 +170,7 @@ sudo systemctl start rtsp-manager      # streams that should run are republished
 
 ## 6. Verify after install
 
-1. **Dashboard:** open `http://rig02.<office-domain>:8080/` from a laptop on the Wi-Fi and log in. The health bar shows MediaMTX **UP**, and there is no "RTSPM_PUBLIC_RTSP_HOST is not set" warning.
+1. **Dashboard:** open `http://rig02.<office-domain>:8080/` from a laptop on the Wi-Fi. The health bar shows MediaMTX **UP**, and there is no "RTSPM_PUBLIC_RTSP_HOST is not set" warning.
 2. **Library:** copy a clip to `/data/rtsp-manager/videos/` (or upload one) and press Refresh. The metadata and thumbnail appear.
 3. **Publish:** New stream → pick the clip → Create & start → copy the URL.
 4. **RTSP from a laptop:** `scripts/validate_rtsp.sh rtsp://rig02.<office-domain>:8554/<name>` must print `PASS`; `ffplay -rtsp_transport tcp <url>` or VLC show the picture (this is not proof of edge compatibility).

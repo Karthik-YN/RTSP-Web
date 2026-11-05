@@ -125,6 +125,7 @@ Other streams are never affected.
 
 ## 8. Security
 
+* **Access:** login is off by default by decision of the project owner: the tool is for the office network, and anyone who reaches it has full access. Everything below about accounts applies only with `RTSPM_AUTH_ENABLED=true`. Network isolation is therefore the main control, and MediaMTX still only accepts publishing from the server itself.
 * Roles `admin` / `operator` / `viewer`; an admin Users page (the last admin cannot be removed or demoted). Login throttling is per user (5 free failures, then 30 s doubling up to 15 min) and per address (30), so one person cannot lock out everyone behind nginx or office NAT. `X-Forwarded-For` is trusted only from a loopback proxy.
 * Optional HTTPS through nginx (`install.sh --tls`), with Secure session cookies and HSTS.
 * Dashboard login: users file with PBKDF2-SHA256 hashes (200k iterations); roles `operator` and `viewer`. Sessions use an HMAC-signed HttpOnly SameSite=Strict cookie. HTTP Basic is accepted for scripts. `/api/health` is the only unauthenticated endpoint and returns no sensitive data.

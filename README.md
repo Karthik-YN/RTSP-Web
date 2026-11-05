@@ -10,7 +10,7 @@ Video file ─▶ Web dashboard ─▶ FastAPI backend ─▶ FFmpeg publisher (
 * **Streams:** unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x, live video preview in the dashboard. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers, the FFmpeg command and the last 20 log lines.
 * **Monitoring:** CPU, RAM, disk, capacity, viewers; MediaMTX health (down detected in ≤ 5 s) with automatic restart and republishing.
 * **Codecs:** H.264 8-bit is stream-copied; H.265/VP9/AV1/10-bit are transcoded to H.264 (with a CPU warning) or refused, per policy. Audio is always dropped.
-* **Teams:** roles (admin/operator/viewer), protected streams with owner notes, groups ("demo sets") with start/stop all and URL export, bulk actions, clone, audit log.
+* **Teams:** direct access for everyone on the network (no login), stream notes, groups ("demo sets") with start/stop all and URL export, bulk actions, clone, audit log.
 * **Operations:** streams keep playing through backend restarts and upgrades; HTTPS option; nightly backups; webhook alerts (Teams/Slack); Prometheus metrics; per-stream availability and bitrate; resumable uploads; light/dark UI.
 
 ## Quick start: `python3 app.py`
@@ -23,7 +23,7 @@ cd rtsp-stream-manager
 python3 app.py
 ```
 
-The first run prepares everything (Python packages, MediaMTX, the first admin login, which it prints) and starts the app **in the background**, so it keeps running after you close the terminal. Open the address it shows. Anyone who runs it later just gets the address. Videos, streams and users are kept in `storage/`.
+The first run prepares everything (Python packages and MediaMTX) and starts the app **in the background**, so it keeps running after you close the terminal. Open the address it shows. Anyone who runs it later just gets the address. Videos, streams and users are kept in `storage/`.
 
 | Command | Does |
 |---|---|
@@ -44,10 +44,10 @@ For a permanent installation (starts on boot, HTTPS, hardened services, backups)
 # 2. On the VM:
 sudo apt-get update && sudo apt-get install -y git
 git clone <this-repository> /tmp/rig02 && cd /tmp/rig02
-sudo scripts/install.sh --host rig02.<office-domain> --with-nginx --tls self-signed   # MediaMTX + app + HTTPS; prints the admin password once
+sudo scripts/install.sh --host rig02.<office-domain> --with-nginx --tls self-signed   # MediaMTX + app + HTTPS
 sudo ufw allow 8554/tcp && sudo ufw allow 443/tcp && sudo ufw allow 80/tcp   # only if ufw is enabled
 scripts/healthcheck.sh                                    # services, ports, API all OK
-# 3. Browser: https://rig02.<office-domain>  → log in as admin (Users page: add your colleagues)
+# 3. Browser: https://rig02.<office-domain>  → opens directly, no login
 # 4. Copy videos into /data/rtsp-manager/videos (or upload them), New stream → copy the RTSP URL → add the camera in the portal
 ```
 
@@ -58,7 +58,7 @@ Details, network/firewall, LXC notes and recovery verification are in **[docs/DE
 | Task | Command |
 |---|---|
 | Configure | edit `/etc/rtsp-manager/rtsp-manager.env` (see [.env.example](.env.example)), then `sudo systemctl restart rtsp-manager` |
-| Add a user | `sudo -u rtspmgr /opt/rtsp-manager/backend/.venv/bin/python /opt/rtsp-manager/scripts/manage_users.py add alice --role operator` |
+| Require a login (optional) | set `RTSPM_AUTH_ENABLED=true`, then create users with `scripts/manage_users.py` |
 | Start / stop services | `sudo systemctl start mediamtx rtsp-manager` · `sudo systemctl stop rtsp-manager mediamtx` |
 | Status | `systemctl status mediamtx rtsp-manager` · `scripts/healthcheck.sh --rtsp` |
 | Logs | `journalctl -u rtsp-manager -f` · `journalctl -u mediamtx -f` · `/var/lib/rtsp-manager/logs/streams/<id>.log` |

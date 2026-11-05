@@ -235,12 +235,16 @@ function UserMenu({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="relative" ref={ref}>
       <button className="flex items-center gap-2 rounded-full p-0.5 pr-2 hover:bg-surface-2" onClick={() => setOpen((o) => !o)}
-        aria-label="User menu" aria-expanded={open}>
-        <Avatar name={user.username} size="md" />
-        <span className="hidden text-left text-xs leading-tight md:block">
-          <span className="block font-semibold">{user.username}</span>
-          <span className="block text-muted">{user.role}</span>
-        </span>
+        aria-label={user.auth_enabled ? "User menu" : "Theme"} aria-expanded={open}>
+        {user.auth_enabled ? (
+          <>
+            <Avatar name={user.username} size="md" />
+            <span className="hidden text-left text-xs leading-tight md:block">
+              <span className="block font-semibold">{user.username}</span>
+              <span className="block text-muted">{user.role}</span>
+            </span>
+          </>
+        ) : <span className="flex h-8 w-8 items-center justify-center text-muted" title="Theme">{pref === "dark" ? <MoonIcon /> : <SunIcon />}</span>}
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-xl border border-line bg-surface p-1.5 text-sm shadow-pop" role="menu">
@@ -263,7 +267,6 @@ function UserMenu({ onLogout }: { onLogout: () => void }) {
               </button>
             </>
           )}
-          {!user.auth_enabled && <p className="px-2.5 py-2 text-xs text-subtle">Authentication is disabled on this server.</p>}
         </div>
       )}
       {pw && <ChangePasswordDialog onClose={() => setPw(false)} />}

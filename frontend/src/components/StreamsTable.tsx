@@ -55,7 +55,7 @@ export function useStreamActions(onChanged: () => void) {
       message={<>
         The publisher stops and the stream configuration is removed. Cameras using{" "}
         <span className="font-mono text-fg">{confirm.rtsp_url}</span> go offline.
-        {confirm.owner && <> It was created by <b className="text-fg">{confirm.owner}</b>.</>} The source video file is <b className="text-fg">not</b> deleted.
+        {confirm.owner && confirm.owner !== "anonymous" && <> It was created by <b className="text-fg">{confirm.owner}</b>.</>} The source video file is <b className="text-fg">not</b> deleted.
       </>}
       onCancel={() => setConfirm(null)}
       onConfirm={() => { const c = confirm; setConfirm(null); run(c, "delete"); }}
@@ -155,7 +155,7 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full max-w-xs">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-subtle" />
-          <input className="input pl-8" placeholder="Search name, file, owner, note…" value={query}
+          <input className="input pl-8" placeholder="Search name, file, note…" value={query}
             onChange={(e) => setQuery(e.target.value)} aria-label="Search streams" />
         </div>
         <div className="flex flex-wrap gap-1 rounded-lg bg-surface-2 p-1 ring-1 ring-inset ring-line" role="tablist" aria-label="Filter streams">
@@ -232,7 +232,7 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
                       <h3 className="truncate font-mono text-[15px] font-semibold">{s.name}</h3>
                       <StatusBadge status={s.status} title={s.status_detail} />
                       {s.output_mode === "transcode" && <Pill tone="warn">transcode</Pill>}
-                      {s.protected && <Pill tone="info" title={`Protected by ${s.owner}: only they or an admin can change it`}><LockIcon className="h-3 w-3" />{s.owner}</Pill>}
+                      {s.protected && user?.auth_enabled && <Pill tone="info" title={`Protected by ${s.owner}: only they or an admin can change it`}><LockIcon className="h-3 w-3" />{s.owner}</Pill>}
                     </div>
                     {s.note && <p className="mt-1 line-clamp-1 text-xs text-muted" title={s.note}>“{s.note}”</p>}
                   </div>
@@ -275,7 +275,7 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
                   {s.runtime.ingest_bps != null && s.status === "RUNNING" && (
                     <span className="tabular-nums" title="Publisher bitrate">{formatBitrate(s.runtime.ingest_bps)}</span>
                   )}
-                  {s.owner && !s.protected && <span className="ml-auto flex items-center gap-1" title={`Created by ${s.owner}`}><Avatar name={s.owner} /></span>}
+                  {s.owner && !s.protected && user?.auth_enabled && <span className="ml-auto flex items-center gap-1" title={`Created by ${s.owner}`}><Avatar name={s.owner} /></span>}
                 </div>
 
                 {problem && (

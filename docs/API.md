@@ -1,6 +1,6 @@
 # RIG-02 REST API
 
-The interactive OpenAPI documentation is served by the backend at **`/docs`** (Swagger UI) and **`/openapi.json`**. Every endpoint except `/api/health` requires authentication: either the browser session cookie from `POST /api/auth/login`, or HTTP Basic auth (`curl -u user:password`). Write operations require the `operator` (or `admin`) role; `viewer` users get 403. **Protected** streams can only be changed by their owner or an admin (403 names the owner and their note). Failed logins are throttled per user (5 free attempts, then exponential lockout) and per client address (30), answered with **429** and `Retry-After`.
+The interactive OpenAPI documentation is served by the backend at **`/docs`** (Swagger UI) and **`/openapi.json`**. By default there is no login and every endpoint is open to anyone who can reach the server. With `RTSPM_AUTH_ENABLED=true`, every endpoint except `/api/health` requires authentication: either the browser session cookie from `POST /api/auth/login`, or HTTP Basic auth (`curl -u user:password`). Write operations require the `operator` (or `admin`) role; `viewer` users get 403. **Protected** streams can only be changed by their owner or an admin (403 names the owner and their note). Failed logins are throttled per user (5 free attempts, then exponential lockout) and per client address (30), answered with **429** and `Retry-After`.
 
 Errors are JSON `{"detail": "<human-readable message>", ...}` with a meaningful status:
 

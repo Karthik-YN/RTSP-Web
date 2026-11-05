@@ -214,9 +214,9 @@ if [[ $WITH_NGINX -eq 1 ]]; then
   systemctl reload nginx
 fi
 
-# First operator account (password shown once, never logged)
+# First admin, only if login is switched on (password shown once, never logged)
 USERS="$DATA/users"
-if [[ ! -s "$USERS" ]]; then
+if grep -q '^RTSPM_AUTH_ENABLED=true' "$ENVFILE" && [[ ! -s "$USERS" ]]; then
   PW=$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
   runuser -u rtspmgr -- env RTSPM_ENV_FILE=/dev/null RTSPM_DATA_DIR="$DATA" \
     "$APP/backend/.venv/bin/python" "$APP/scripts/manage_users.py" add admin --role admin --password-stdin <<<"$PW"
