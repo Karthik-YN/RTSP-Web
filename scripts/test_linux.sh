@@ -3,7 +3,7 @@
 #   1. backend test suite on Debian 12 (FFmpeg 5.1) and Ubuntu 24.04 (FFmpeg 6.1)
 #   2. scripts/install.sh inside a systemd container, then health check + a real stream
 #
-#   scripts/test_linux.sh [tests|install|tls|launcher|all]     (default: all)
+#   scripts/test_linux.sh [tests|install|tls|launcher|spike|all]     (default: all)
 # Requires Docker. Test fixtures are generated on the host first.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -118,11 +118,20 @@ run_launcher() {
   echo LAUNCHER-TEST-PASSED
 }
 
+run_spike() {
+  echo "=== lead-in spike on Debian 12 (FFmpeg 5.1, GStreamer RTSP readers)"
+  docker build -q -f deployment/test/Dockerfile.tests --build-arg BASE=debian:12 -t rig02-test:debian12 . >/dev/null
+  docker build -q -f deployment/test/Dockerfile.spike -t rig02-spike . >/dev/null
+  mkdir -p docs/reports/spike_leadin
+  docker run --rm -v "$ROOT/docs/reports/spike_leadin:/out" rig02-spike
+}
+
 case "$WHAT" in
   tests) run_tests debian:12 debian12; run_tests ubuntu:24.04 ubuntu2404 ;;
   install) run_install ;;
   tls) run_install_tls ;;
   launcher) run_launcher ;;
+  spike) run_spike ;;
   all) run_tests debian:12 debian12; run_tests ubuntu:24.04 ubuntu2404; run_install; run_install_tls; run_launcher ;;
-  *) echo "usage: $0 [tests|install|tls|launcher|all]"; exit 2 ;;
+  *) echo "usage: $0 [tests|install|tls|launcher|spike|all]"; exit 2 ;;
 esac

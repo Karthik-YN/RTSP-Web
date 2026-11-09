@@ -106,6 +106,7 @@ Edge-dependent tests are manual: **[docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATIO
 | [docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATION.md) | Manual runbook for the 5.x edge (30-min loop, 16-stream reboot) |
 | [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) | How it works in plain terms, and a full script for demoing it to the team |
 | [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md) | Acceptance checklist, performance and recovery results, report template |
+| [docs/SPIKE_LEADIN.md](docs/SPIKE_LEADIN.md) | Lead-in slate / hold-until-viewer spike: results on macOS and Debian 12, and the design for it |
 
 ## Repository layout
 
