@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 
-from ..models import Stream, StreamStatus, Video
+from ..models import AnalyticsSlot, Stream, StreamStatus, Video
 from ..schemas import LogsOut, StreamCreate, StreamDetailOut, StreamOut, StreamUpdate, StreamValidateOut
 from ..services.auth import User
 from ..services.errors import Invalid, ServiceError
@@ -42,7 +42,7 @@ def stream_out(ctx: Context, row: Stream, proc_index: dict | None = None) -> Str
         version=row.version, created_at=row.created_at, created_by=row.created_by, updated_at=row.updated_at,
         updated_by=row.updated_by, last_start_at=row.last_start_at, last_stop_at=row.last_stop_at,
         running_since=row.running_since, owner=row.owner, note=row.note, protected=bool(row.protected),
-        group_id=row.group_id, warnings=(row.config_json or {}).get("compat_warnings", []),
+        group_id=row.group_id, slot_id=row.slot_id, warnings=(row.config_json or {}).get("compat_warnings", []),
         runtime=ctx.supervisor.runtime_view(row, proc_index if proc_index is not None else _proc_index(ctx)),
     )
 
@@ -110,8 +110,12 @@ async def validate(body: StreamCreate, ctx: Context = Depends(get_ctx), _: User 
 @router.post("", response_model=StreamOut, status_code=201)
 async def create_stream(body: StreamCreate, wait: bool = False, ctx: Context = Depends(get_ctx),
                         user: User = Depends(require_operator)):
+    if body.slot_id is not None:
+        with ctx.db.session() as s:
+            if s.get(AnalyticsSlot, body.slot_id) is None:
+                raise HTTPException(404, "Video placeholder not found.")
     row = await ctx.supervisor.create(body.name, _cfg(body), body.start_now, user.username,
-                                      note=body.note, protected=body.protected)
+                                      note=body.note, protected=body.protected, slot_id=body.slot_id)
     if wait and body.start_now:
         row = await ctx.supervisor.wait_until_settled(row.id, ctx.settings.startup_timeout_s + 5)
     return stream_out(ctx, row)
@@ -250,6 +254,9 @@ async def live_preview(stream_id: int, file: str, request: Request, ctx: Context
     if row.status != StreamStatus.RUNNING:
         raise HTTPException(409, "The stream is not live.")
     url = f"{ctx.settings.mediamtx_hls_url.rstrip('/')}/{row.name}/{file}"
+    if file.endswith(".m3u8"):  # count distinct dashboard viewers of this preview
+        client = f"{request.client.host if request.client else '?'}|{request.headers.get('user-agent', '')[:120]}"
+        ctx.mediamtx.note_preview(row.name, client)
     try:
         # follow_redirects: MediaMTX answers the first request with a cookie-check 302.
         # The first playlist is held until 3 segments exist; a segment can't be shorter

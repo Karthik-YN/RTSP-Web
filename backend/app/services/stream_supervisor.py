@@ -296,7 +296,7 @@ class StreamSupervisor:
 
     # ================================================================ public API
     async def create(self, name: str, cfg: StreamConfig, start: bool, user: str | None,
-                     note: str | None = None, protected: bool = False) -> Stream:
+                     note: str | None = None, protected: bool = False, slot_id: int | None = None) -> Stream:
         try:
             name = validate_stream_name(name, self.s.stream_name_pattern, self.s.reserved_names)
         except ValidationError as exc:
@@ -319,7 +319,7 @@ class StreamSupervisor:
                                  status=StreamStatus.STARTING if start else StreamStatus.STOPPED,
                                  created_at=now, created_by=user, updated_at=now, updated_by=user,
                                  version=1, loop_count=0, owner=user, note=note or None,
-                                 protected=bool(protected), **fields)
+                                 protected=bool(protected), slot_id=slot_id, **fields)
                     s.add(row)
                     s.flush()
                     sid = row.id
@@ -954,6 +954,8 @@ class StreamSupervisor:
             "path_known": p is not None,
             "readers": p.readers if p else [],
             "viewer_count": len(p.readers) if p else 0,
+            "viewer_peak_today": self.mtx.peak_today(row.name),
+            "preview_watchers": self.mtx.preview_watchers(row.name),
             "bytes_received": p.bytes_received if p else None,
             "ingest_bps": round(p.ingest_bps) if p and p.ingest_bps is not None else None,
             "egress_bps": round(p.egress_bps) if p and p.egress_bps is not None else None,

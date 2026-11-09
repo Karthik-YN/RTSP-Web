@@ -17,9 +17,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Awaitable, Callable
 
 import httpx
@@ -29,6 +31,43 @@ from ..config import Settings
 log = logging.getLogger(__name__)
 
 UP, DOWN, UNKNOWN = "UP", "DOWN", "UNKNOWN"
+PREVIEW_ACTIVE_S = 20.0  # a dashboard preview polls its playlist every few seconds
+
+
+def addr_ip(remote_addr: str | None) -> str | None:
+    """'192.168.1.5:61080' -> '192.168.1.5'; '[fe80::1]:554' -> 'fe80::1'."""
+    if not remote_addr:
+        return None
+    host = remote_addr.rsplit(":", 1)[0] if remote_addr.count(":") == 1 or remote_addr.startswith("[") \
+        else remote_addr
+    return host.strip("[]")
+
+
+class HostnameCache:
+    """Reverse-DNS names for viewer IPs, looked up in the background (never blocks a request)."""
+
+    def __init__(self, ttl_s: float = 600.0):
+        self.ttl_s = ttl_s
+        self._names: dict[str, tuple[float, str | None]] = {}
+        self._pending: set[str] = set()
+        self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rdns")
+
+    def get(self, ip: str | None) -> str | None:
+        if not ip:
+            return None
+        hit = self._names.get(ip)
+        if (hit is None or time.monotonic() - hit[0] > self.ttl_s) and ip not in self._pending:
+            self._pending.add(ip)
+            self._pool.submit(self._lookup, ip)
+        return hit[1] if hit else None
+
+    def _lookup(self, ip: str) -> None:
+        try:
+            name = socket.gethostbyaddr(ip)[0]
+        except (OSError, UnicodeError):
+            name = None
+        self._names[ip] = (time.monotonic(), name if name and name != ip else None)
+        self._pending.discard(ip)
 
 
 @dataclass
@@ -184,6 +223,9 @@ class MediaMTXService:
         self._first_fail_mono: float | None = None
         self.up_event = asyncio.Event()
         self._prev_bytes: dict[str, tuple[float, int, int]] = {}
+        self.hostnames = HostnameCache()
+        self._preview_seen: dict[str, dict[str, float]] = {}  # path -> {client: last seen (monotonic)}
+        self._peaks: dict[str, tuple[date, int]] = {}  # path -> (day, max RTSP viewers that day)
 
     # ------------------------------------------------------------ polling
     async def fetch(self) -> dict[str, PathInfo]:
@@ -205,6 +247,7 @@ class MediaMTXService:
                 readers.append({
                     "type": rd.get("type"), "id": rd.get("id"),
                     "remote_addr": sess.get("remoteAddr"),
+                    "hostname": self.hostnames.get(addr_ip(sess.get("remoteAddr"))),
                     "since": sess.get("created"),
                     "bytes_sent": sess.get("bytesSent"),
                     "transport": sess.get("transport"),
@@ -248,6 +291,10 @@ class MediaMTXService:
                 self._prev_bytes[name] = (now_m, pinfo.bytes_received, pinfo.bytes_sent)
         self._prev_bytes = {k: v for k, v in self._prev_bytes.items() if k in paths}
         self.paths = paths
+        today = datetime.now().date()
+        for name, pinfo in paths.items():
+            day, peak = self._peaks.get(name, (today, 0))
+            self._peaks[name] = (today, max(peak if day == today else 0, len(pinfo.readers)))
         self.consecutive_failures = 0
         self._first_fail_mono = None
         seen_up_before = self.last_ok_at is not None
@@ -330,6 +377,23 @@ class MediaMTXService:
     # ------------------------------------------------------------ queries
     def path(self, name: str) -> PathInfo | None:
         return self.paths.get(name)
+
+    def peak_today(self, name: str) -> int:
+        day, peak = self._peaks.get(name, (None, 0))
+        return peak if day == datetime.now().date() else 0
+
+    def note_preview(self, name: str, client: str) -> None:
+        """Record that a dashboard preview (HLS through the backend) fetched this path."""
+        self._preview_seen.setdefault(name, {})[client] = time.monotonic()
+
+    def preview_watchers(self, name: str) -> int:
+        seen = self._preview_seen.get(name)
+        if not seen:
+            return 0
+        cutoff = time.monotonic() - PREVIEW_ACTIVE_S
+        for k in [k for k, v in seen.items() if v < cutoff]:
+            del seen[k]
+        return len(seen)
 
     def total_bps(self, names: set[str] | None = None) -> tuple[float, float]:
         ps = [p for n, p in self.paths.items() if names is None or n in names]

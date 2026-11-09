@@ -6,8 +6,9 @@ A small web app on the Proxmox server that turns recorded videos into live RTSP 
 Video file ─▶ Web dashboard ─▶ FastAPI backend ─▶ FFmpeg publisher (one per stream) ─▶ MediaMTX :8554 ─▶ 5.x edge
 ```
 
-* **Library:** browser upload (streamed, disk-checked) or copy files into `/data/rtsp-manager/videos`. FFprobe metadata, thumbnail, compatibility verdict.
-* **Streams:** unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x, live video preview in the dashboard. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers, the FFmpeg command and the last 20 log lines.
+* **Analytics taskbar:** Traffic, People, Earth Science and Parking with their analytics (PPE, VehicleALPR, …) in the left bar. Each analytics has video placeholders with a title and description; upload or pick a video and run 1–20 cameras from it in one go, then start/stop all or copy all URLs.
+* **Library:** upload from any device's browser to the server (drop files anywhere, several at once, resumable, disk-checked) or copy files into `/data/rtsp-manager/videos`. FFprobe metadata, thumbnail, compatibility verdict.
+* **Streams:** unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x, live video preview in the dashboard. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers (with host names and today's peak; dashboard preview watchers shown separately), the FFmpeg command and the last 20 log lines.
 * **Monitoring:** CPU, RAM, disk, capacity, viewers; MediaMTX health (down detected in ≤ 5 s) with automatic restart and republishing.
 * **Codecs:** H.264 8-bit is stream-copied; H.265/VP9/AV1/10-bit are transcoded to H.264 (with a CPU warning) or refused, per policy. Audio is always dropped.
 * **Teams:** direct access for everyone on the network (no login), stream notes, groups ("demo sets") with start/stop all and URL export, bulk actions, clone, audit log.

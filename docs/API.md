@@ -38,9 +38,9 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | GET/DELETE | `/api/videos/uploads/{id}` | Ask the current offset (after a dropped connection) / abort and release the space |
 | DELETE | `/api/videos/{id}` | **Admin**: move to `.trash` (purged after 7 days); 409 while any stream uses it |
 | GET | `/api/videos/{id}` · `/thumbnail` · `/frame?t=` | Metadata, thumbnail, frame at time *t* (JPEG) |
-| GET | `/api/streams` | All streams with live runtime (status, path ready, viewers, loops, progress) |
+| GET | `/api/streams` | All streams with live runtime (status, path ready, viewers with host names, `viewer_peak_today`, `preview_watchers`, loops, progress) |
 | POST | `/api/streams/validate` | Dry run of a create: effective (keyframe) start/end, output mode, warnings |
-| POST | `/api/streams[?wait=true]` | Create (and start unless `start_now:false`) |
+| POST | `/api/streams[?wait=true]` | Create (and start unless `start_now:false`); optional `slot_id` links it to an analytics video placeholder |
 | GET | `/api/streams/{id}` | Detail: command, PID, config, source metadata, last 20 log lines, events |
 | PATCH | `/api/streams/{id}` | Edit (`If-Match`). Config changes restart a running stream; `note`, `protected` (owner/admin) and `owner` (admin) do not. Renaming requires a stopped stream |
 | POST | `/api/streams/{id}/start|stop|restart[?wait=true]` | Lifecycle |
@@ -55,6 +55,16 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | POST | `/api/groups/members` `{stream_ids, group_id}` | Put streams into a group (`null` removes them) |
 | POST | `/api/groups/{id}/start\|stop\|restart` | Act on every stream of a group |
 | GET | `/api/groups/{id}/urls?format=txt\|csv` | All RTSP URLs of a group (for the portal or `measure_recovery.py`) |
+| GET | `/api/analytics` | Left-taskbar tree: categories → analytics with `slots`, `slot_ids`, `streams`, `running`, `problems`, `viewers` |
+| GET | `/api/analytics/{id}` | One analytics: its video placeholders (`slots`), each with its video and the streams run from it |
+| POST · PATCH · DELETE | `/api/analytics` · `/api/analytics/{id}` | Add (`{name, category_id, description}`), rename/move/describe, delete (409 while it still has placeholders) |
+| POST · PATCH · DELETE | `/api/analytics/categories` · `/api/analytics/categories/{id}` | Manage categories (delete: 409 while it still has analytics) |
+| POST | `/api/analytics/{id}/slots` `{title, description, video_id?}` | Add a video placeholder |
+| PATCH · DELETE | `/api/analytics/slots/{id}` | Edit title/description, attach (`video_id`) or detach (`clear_video`) a video; delete (409 while it has streams) |
+| POST | `/api/analytics/{id}/slots/reorder` `{slot_ids}` | Order of the placeholder cards |
+| POST | `/api/analytics/slots/{id}/streams` `{count 1–20, name_prefix?, start, end, mode, start_now}` | Create *count* cameras from the placeholder's video, named `<prefix>-1…N` (default prefix: the analytics name). Returns `{created, errors, skipped}`: if capacity runs out midway, the ones created are kept |
+| POST | `/api/analytics/{id}/start\|stop\|restart` | Act on every stream of the analytics |
+| GET | `/api/analytics/{id}/urls?format=txt\|csv` | All RTSP URLs of the analytics, for the portal |
 | GET | `/api/metrics` | Prometheus text format (streams by status, per-stream up/viewers/egress/restarts, MediaMTX up, CPU, RAM, disk) |
 | GET | `/api/system` | CPU, RAM, disks, network, FFmpeg processes, stream counts and capacity, viewers, warnings |
 | GET | `/api/system/recovery` | Last boot-recovery report (seconds after OS boot for every stream) |

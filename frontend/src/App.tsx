@@ -4,8 +4,10 @@ import { api, ApiError, setUnauthorizedHandler } from "./services/api";
 import type { AppConfig, User } from "./types/api";
 import { ErrorBox, Spinner, ToastProvider } from "./components/common";
 import { AppShell } from "./components/AppShell";
-import { RigDataProvider } from "./hooks/useRigData";
+import { UploadQueueProvider } from "./components/UploadQueue";
+import { RigDataProvider, useRig } from "./hooks/useRigData";
 import { useTheme } from "./lib/theme";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { EventsPage } from "./pages/EventsPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { Login } from "./pages/Login";
@@ -60,20 +62,29 @@ export default function App() {
       {state === "ready" && user && config && (
         <BrowserRouter>
           <RigDataProvider user={user} config={config}>
+            <Uploads>
             <AppShell onLogout={logout}>
               <Routes>
                 <Route path="/" element={<Navigate to="/streams" replace />} />
                 <Route path="/streams" element={<StreamsPage />} />
                 <Route path="/streams/:id" element={<StreamPage />} />
                 <Route path="/library" element={<LibraryPage />} />
+                <Route path="/analytics/:id" element={<AnalyticsPage />} />
                 <Route path="/events" element={<EventsPage />} />
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="*" element={<Navigate to="/streams" replace />} />
               </Routes>
             </AppShell>
+            </Uploads>
           </RigDataProvider>
         </BrowserRouter>
       )}
     </ToastProvider>
   );
+}
+
+/** Upload queue that refreshes the library when a file lands on the server. */
+function Uploads({ children }: { children: React.ReactNode }) {
+  const { refreshVideos } = useRig();
+  return <UploadQueueProvider onUploaded={refreshVideos}>{children}</UploadQueueProvider>;
 }

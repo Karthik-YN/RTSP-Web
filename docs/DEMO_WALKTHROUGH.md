@@ -172,7 +172,7 @@ Show the architecture diagram from Part 1 for 30 seconds. Don't go deeper yet.
 Open the dashboard: there's no login, and you land on **Streams** with the getting-started guide.
 
 - Point to the top bar: "All systems normal", CPU, RAM, disk, stream capacity.
-- Point to the sidebar: Streams, Video library, Events.
+- Point to the sidebar: Streams, Video library, Events, and below them the **Analytics** taskbar: Traffic, People, Earth Science and Parking, each with its analytics. The numbers show live/total streams; a red dot means one needs attention.
 
 ### 3. The video library (3 min)
 
@@ -201,6 +201,18 @@ Open VLC (**Media → Open Network Stream**), paste the URL, press Play.
 > "That's a live RTSP camera, from a recording, in about 20 seconds."
 
 If you have the portal open, add it as a camera now (see `docs/EDGE_VALIDATION.md`, "Standard procedure"). If the edge isn't validated yet, say so: "the edge test is the next step."
+
+### 4b. Run cameras for an analytics (3 min)
+
+1. In the left taskbar, open **People → PPE**.
+2. Click **Add video placeholder**. Give it a title ("Warehouse gate, day shift") and a description of the scene and what should be detected.
+3. Drag a video from your laptop onto the card (or **Upload from this device**). Point out the Uploads panel: the file goes to the server, not your laptop, and keeps going if you switch pages.
+4. Click **Run RTSP**, set **Number of cameras** to 3 and **Create 3 streams**. Show the names `ppe-1…3` and **Copy all URLs**.
+5. Show the streams on the card with their viewers, and the **PPE** label on the Streams page.
+
+> "Each analytics has its own shelf of test videos with notes, and one click turns a video into as many cameras as the edge needs."
+
+Stop a stream on the card and start it again: "tomorrow it is still there, on the same URL."
 
 ### 5. Everyone joins (3 min)
 

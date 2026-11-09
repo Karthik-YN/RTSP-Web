@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { useRig } from "../hooks/useRigData";
 import { api, ApiError } from "../services/api";
 import { formatBitrate, formatTime, since } from "../lib/format";
 import type { BulkResult, Stream, StreamGroup, User } from "../types/api";
 import { Avatar, ConfirmDialog, CopyButton, copyText, Pill, StatusBadge, useToast } from "./common";
-import { CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilmIcon, GridIcon, LockIcon, LoopIcon, PlayIcon, RestartIcon, SearchIcon, StopIcon, TrashIcon } from "./icons";
+import { CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilmIcon, GridIcon, LockIcon, LoopIcon, MonitorIcon, PlayIcon, RestartIcon, SearchIcon, StopIcon, TrashIcon } from "./icons";
 
 type Action = "start" | "stop" | "restart" | "delete";
 
@@ -84,6 +86,14 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [groupFilter, setGroupFilter] = useState<number | null>(null);
+  const [analyticsFilter, setAnalyticsFilter] = useState<number | null>(null);
+  const { analytics } = useRig();
+  // stream.slot_id -> its analytics, for labels and the analytics filter
+  const slotAnalytics = new Map<number, { id: number; name: string }>();
+  for (const c of analytics ?? []) for (const a of c.analytics) for (const sid of a.slot_ids) slotAnalytics.set(sid, a);
+  const analyticsOf = (s: Stream) => (s.slot_id != null ? slotAnalytics.get(s.slot_id) ?? null : null);
+  const usedAnalytics = [...new Map(streams.map(analyticsOf).filter(Boolean).map((a) => [a!.id, a!])).values()]
+    .sort((x, y) => x.name.localeCompare(y.name));
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [working, setWorking] = useState(false);
@@ -141,6 +151,7 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
   const q = query.trim().toLowerCase();
   const shown = streams.filter((s) =>
     (groupFilter === null || s.group_id === groupFilter) &&
+    (analyticsFilter === null || analyticsOf(s)?.id === analyticsFilter) &&
     (filter === "all" || (filter === "live" && isLive(s)) || (filter === "problems" && isProblem(s)) ||
       (filter === "stopped" && !isLive(s)) || (filter === "mine" && s.owner === user?.username)) &&
     (!q || s.name.toLowerCase().includes(q) || s.source_rel_path.toLowerCase().includes(q) ||
@@ -171,6 +182,13 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
             );
           })}
         </div>
+        {usedAnalytics.length > 0 && (
+          <select className="input h-8 w-auto py-1 text-xs" value={analyticsFilter ?? ""} aria-label="Filter by analytics"
+            onChange={(e) => setAnalyticsFilter(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">All analytics</option>
+            {usedAnalytics.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        )}
         {user?.can_write && (
           <button className={`${selecting ? "btn-primary" : "btn-secondary"} ml-auto`} onClick={() => { setSelecting((x) => !x); setSelected(new Set()); }}>
             <CheckIcon /> {selecting ? "Done" : "Select"}
@@ -232,6 +250,11 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
                       <h3 className="truncate font-mono text-[15px] font-semibold">{s.name}</h3>
                       <StatusBadge status={s.status} title={s.status_detail} />
                       {s.output_mode === "transcode" && <Pill tone="warn">transcode</Pill>}
+                      {analyticsOf(s) && (
+                        <Link to={`/analytics/${analyticsOf(s)!.id}`} onClick={(e) => e.stopPropagation()}
+                          className="rounded-md bg-brand-soft px-1.5 py-0.5 text-xs font-medium text-brand hover:underline"
+                          title="Open this analytics">{analyticsOf(s)!.name}</Link>
+                      )}
                       {s.protected && user?.auth_enabled && <Pill tone="info" title={`Protected by ${s.owner}: only they or an admin can change it`}><LockIcon className="h-3 w-3" />{s.owner}</Pill>}
                     </div>
                     {s.note && <p className="mt-1 line-clamp-1 text-xs text-muted" title={s.note}>“{s.note}”</p>}
@@ -269,9 +292,21 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
                   {s.status === "RUNNING" && (
                     <span className="flex items-center gap-1"><ClockIcon className="h-3.5 w-3.5 text-subtle" />{since(s.running_since, now)}</span>
                   )}
-                  <span className="flex items-center gap-1" title="Readers connected (e.g. the edge)">
+                  {!isLive(s) && (s.last_stop_at || s.last_start_at) && (
+                    <span className="flex items-center gap-1" title="Start it again any time: the URL stays the same">
+                      <ClockIcon className="h-3.5 w-3.5 text-subtle" />last ran {since(s.last_stop_at ?? s.last_start_at, now)} ago
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1"
+                    title={`RTSP viewers now (e.g. the edge) · peak today ${s.runtime.viewer_peak_today}`}>
                     <EyeIcon className="h-3.5 w-3.5 text-subtle" />{mediamtxDown ? "?" : s.runtime.viewer_count}
+                    {s.runtime.viewer_peak_today > s.runtime.viewer_count && <span className="text-subtle">(peak {s.runtime.viewer_peak_today})</span>}
                   </span>
+                  {s.runtime.preview_watchers > 0 && (
+                    <span className="flex items-center gap-1 text-subtle" title="Watching the preview in the dashboard (not counted as viewers)">
+                      <MonitorIcon className="h-3.5 w-3.5" />{s.runtime.preview_watchers}
+                    </span>
+                  )}
                   {s.runtime.ingest_bps != null && s.status === "RUNNING" && (
                     <span className="tabular-nums" title="Publisher bitrate">{formatBitrate(s.runtime.ingest_bps)}</span>
                   )}

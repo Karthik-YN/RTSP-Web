@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
-import { api, ApiError, uploadVideo } from "../services/api";
+import { api, ApiError } from "../services/api";
+import { useUploads } from "./UploadQueue";
 import { formatBytes, formatTime } from "../lib/format";
 import type { User, Video } from "../types/api";
-import { ConfirmDialog, ErrorBox, Pill, Spinner, useToast } from "./common";
+import { ConfirmDialog, Pill, Spinner, useToast } from "./common";
 import { CameraIcon, FilmIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
 export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
@@ -144,72 +145,18 @@ function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
   );
 }
 
-function UploadButton({ onDone }: { onDone: () => void }) {
-  const toast = useToast();
+function UploadButton({ onDone: _onDone }: { onDone: () => void }) {
+  // Uploads run in the app-wide queue (bottom-right panel), so they keep going while you
+  // move between pages; the library refreshes when each file lands.
+  const { enqueue } = useUploads();
   const input = useRef<HTMLInputElement>(null);
-  const [progress, setProgress] = useState<{ name: string; loaded: number; total: number; started: number; note?: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<() => void>(() => {});
-
-  const pick = async (file: File) => {
-    setError(null);
-    try {
-      // Ask first: is there room? The server refuses before any byte is sent.
-      const chk = await api.uploadCheck(file.name, file.size);
-      if (chk.exists) {
-        setError(`A file named '${chk.filename}' already exists in the library.`);
-        return;
-      }
-      if (!chk.ok) {
-        setError(`Not enough disk space: needs ${formatBytes(chk.required)}, available ${formatBytes(chk.available)} ` +
-          `(free ${formatBytes(chk.free)} minus safety reserve ${formatBytes(chk.reserve)}` +
-          `${chk.in_flight_uploads ? ` and ${formatBytes(chk.in_flight_uploads)} of other uploads in progress` : ""}).`);
-        return;
-      }
-    } catch (e) {
-      setError((e as ApiError).message);
-      return;
-    }
-    const started = Date.now();
-    setProgress({ name: file.name, loaded: 0, total: file.size, started });
-    const { promise, abort } = uploadVideo(file, (loaded, total, note) => setProgress({ name: file.name, loaded, total, started, note }));
-    abortRef.current = abort;
-    try {
-      const v = await promise;
-      toast("ok", `Uploaded ${v.filename} (${formatTime(v.duration_s, false)}, ${v.video_codec})`);
-      onDone();
-    } catch (e) {
-      const err = e as ApiError;
-      if (err.status === -1) { toast("info", "Upload cancelled."); return; }
-      const d = err.data as { required?: number; free?: number; available?: number };
-      setError(err.status === 507 && d.required
-        ? `${err.message} Needs ${formatBytes(d.required)}, free ${formatBytes(d.free)}, available ${formatBytes(d.available)}.`
-        : err.message);
-    } finally {
-      setProgress(null);
-      if (input.current) input.current.value = "";
-    }
-  };
-
-  const pct = progress ? Math.floor((progress.loaded / Math.max(1, progress.total)) * 100) : 0;
-  const rate = progress ? progress.loaded / Math.max(0.5, (Date.now() - progress.started) / 1000) : 0;
   return (
     <>
-      <input ref={input} type="file" className="hidden" accept="video/*,.mkv,.ts,.mts,.m2ts"
-        onChange={(e) => e.target.files?.[0] && pick(e.target.files[0])} />
-      {progress ? (
-        <div className="flex min-w-[20rem] items-center gap-2 text-xs">
-          <div className="flex-1">
-            <div className="truncate">{progress.name}: {pct}% ({formatBytes(progress.loaded)} / {formatBytes(progress.total)}, {formatBytes(rate)}/s)
-              {progress.note && <span className="ml-1 text-amber-600 dark:text-amber-400">{progress.note}</span>}</div>
-            <div className="mt-1 h-1.5 overflow-hidden rounded bg-line"><div className="h-full bg-brand-strong" style={{ width: `${pct}%` }} /></div>
-          </div>
-          <button className="btn-secondary btn-xs" onClick={() => abortRef.current()}>Cancel</button>
-        </div>
-      ) : (
-        <button className="btn-primary" onClick={() => input.current?.click()}><UploadIcon /> Upload video</button>
-      )}
-      {error && <div className="w-full"><ErrorBox>{error}</ErrorBox></div>}
+      <input ref={input} type="file" multiple className="hidden" accept="video/*,.mkv,.ts,.mts,.m2ts"
+        onChange={(e) => { enqueue(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+      <button className="btn-primary" onClick={() => input.current?.click()} title="You can also drop videos anywhere on the page">
+        <UploadIcon /> Upload videos
+      </button>
     </>
   );
 }

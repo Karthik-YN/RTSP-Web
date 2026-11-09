@@ -158,13 +158,21 @@ export function StreamPage() {
 
       {tab === "viewers" && (
         <Panel title="Connected readers">
+          <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+            <span><span className="text-muted">RTSP viewers now</span> <b>{s.runtime.viewer_count}</b></span>
+            <span><span className="text-muted">Peak today</span> <b>{s.runtime.viewer_peak_today}</b></span>
+            <span title="People watching the live preview in this dashboard. Not counted as viewers.">
+              <span className="text-muted">Dashboard preview</span> <b>{s.runtime.preview_watchers}</b></span>
+          </div>
           {s.runtime.readers.length === 0 ? <p className="text-muted">No readers connected. Point the edge at the URL above.</p> : (
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-muted"><th className="py-1">Address</th><th>Transport</th><th>Since</th><th className="text-right">Sent</th></tr></thead>
+              <thead><tr className="text-left text-xs text-muted"><th className="py-1">Address</th><th>Host name</th><th>Transport</th><th>Since</th><th className="text-right">Sent</th></tr></thead>
               <tbody className="divide-y divide-line">
                 {s.runtime.readers.map((r) => (
                   <tr key={r.id ?? r.remote_addr}>
-                    <td className="py-1.5 font-mono text-xs">{r.remote_addr ?? r.type}</td><td className="text-xs">{r.transport ?? "–"}</td>
+                    <td className="py-1.5 font-mono text-xs">{r.remote_addr ?? r.type}</td>
+                    <td className="text-xs">{r.hostname ?? <span className="text-subtle">–</span>}</td>
+                    <td className="text-xs">{r.transport ?? "–"}</td>
                     <td className="text-xs">{r.since ? `${new Date(r.since).toLocaleTimeString()} (${since(r.since)})` : "–"}</td>
                     <td className="text-right text-xs">{formatBytes(r.bytes_sent)}</td>
                   </tr>

@@ -4,11 +4,11 @@ import { api, ApiError } from "../services/api";
 import { useRig } from "../hooks/useRigData";
 import { formatBitrate, formatBytes, formatDuration } from "../lib/format";
 import { useTheme, type ThemePref } from "../lib/theme";
-import { Avatar, ErrorBox, Modal, Spinner, useToast, WarnBox } from "./common";
+import { Avatar, ErrorBox, Modal, Skeleton, Spinner, useToast, WarnBox } from "./common";
 import { CreateStreamDialog, type StreamTemplate } from "./CreateStreamDialog";
 import {
-  ActivityIcon, CameraIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon, PlusIcon,
-  SunIcon, UsersIcon,
+  ActivityIcon, CameraIcon, ChevronIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
+  PlusIcon, SearchIcon, SunIcon, UsersIcon,
 } from "./icons";
 
 // ------------------------------------------------------------------ create-stream launcher
@@ -68,7 +68,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <>
       {open && <div className="fixed inset-0 z-30 bg-slate-950/50 lg:hidden" onClick={onClose} />}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-line bg-surface transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-line bg-surface transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-2.5 px-4 py-4">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
             <CameraIcon />
@@ -78,7 +78,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             <div className="text-xs text-muted">Stream Manager</div>
           </div>
         </div>
-        <nav className="flex-1 space-y-0.5 px-2" aria-label="Main">
+        <nav className="space-y-0.5 px-2" aria-label="Main">
           {items.map((it) => (
             <NavLink key={it.to} to={it.to}
               className={({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive
@@ -87,12 +87,140 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             </NavLink>
           ))}
         </nav>
+        <AnalyticsNav />
         <div className="border-t border-line px-4 py-3 text-xs text-subtle">
           <div className="truncate" title="RTSP host shown in stream URLs">rtsp://{config.public_rtsp_host}:{config.public_rtsp_port}</div>
           <div>v{config.version}</div>
         </div>
       </aside>
     </>
+  );
+}
+
+const FOLDED_KEY = "rig02.analytics.folded";
+
+/** Fast access to every analytics, grouped by category, with live/total stream counts. */
+export function AnalyticsNav() {
+  const { analytics, user, refreshAnalytics } = useRig();
+  const toast = useToast();
+  const [q, setQ] = useState("");
+  const [folded, setFolded] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem(FOLDED_KEY) ?? "[]"); } catch { return []; }
+  });
+  const [adding, setAdding] = useState(false);
+  const toggle = (id: number) => {
+    const next = folded.includes(id) ? folded.filter((x) => x !== id) : [...folded, id];
+    setFolded(next);
+    try { localStorage.setItem(FOLDED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  };
+  const needle = q.trim().toLowerCase();
+  const cats = (analytics ?? []).map((c) => ({
+    ...c, analytics: c.analytics.filter((a) => !needle || a.name.toLowerCase().includes(needle)
+      || c.name.toLowerCase().includes(needle)),
+  })).filter((c) => !needle || c.analytics.length);
+  return (
+    <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-line pt-3">
+      <div className="flex items-center gap-2 px-4 pb-2">
+        <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-subtle">Analytics</span>
+        {user.can_write && (
+          <button className="btn-ghost p-1" onClick={() => setAdding(true)} title="New analytics" aria-label="New analytics">
+            <PlusIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="px-3 pb-2">
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-subtle" />
+          <input className="input h-8 py-1 pl-8 text-xs" placeholder="Find an analytics" value={q}
+            onChange={(e) => setQ(e.target.value)} aria-label="Find an analytics" />
+        </div>
+      </div>
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Analytics">
+        {!analytics && <div className="space-y-2 px-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-5" />)}</div>}
+        {analytics && !cats.length && <p className="px-3 text-xs text-muted">No analytics match "{q}".</p>}
+        {cats.map((c) => {
+          const isOpen = !!needle || !folded.includes(c.id);
+          const live = c.analytics.reduce((n, a) => n + a.running, 0);
+          return (
+            <div key={c.id} className="mb-1">
+              <button className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-muted hover:text-fg"
+                onClick={() => toggle(c.id)} aria-expanded={isOpen}>
+                <ChevronIcon className={`h-3 w-3 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                <span className="flex-1 text-left">{c.name}</span>
+                {live > 0 && <span className="text-emerald-600 dark:text-emerald-400" title="Live streams">{live} live</span>}
+              </button>
+              {isOpen && c.analytics.map((a) => (
+                <NavLink key={a.id} to={`/analytics/${a.id}`} title={a.description ?? a.name}
+                  className={({ isActive }) => `ml-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${isActive
+                    ? "bg-brand-soft font-medium text-brand" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
+                  <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                  {a.problems > 0 && <span className="h-2 w-2 rounded-full bg-red-500" title={`${a.problems} stream(s) need attention`} />}
+                  {a.streams > 0
+                    ? <span className="tabular-nums text-xs text-subtle" title={`${a.running} live of ${a.streams} streams`}>{a.running}/{a.streams}</span>
+                    : a.slots > 0 ? <span className="text-xs text-subtle" title="Video placeholders">{a.slots} vid</span> : null}
+                </NavLink>
+              ))}
+            </div>
+          );
+        })}
+      </nav>
+      {adding && analytics && (
+        <NewAnalyticsDialog categories={analytics} onClose={() => setAdding(false)}
+          onCreated={() => { setAdding(false); refreshAnalytics(); toast("ok", "Analytics added."); }} />
+      )}
+    </div>
+  );
+}
+
+function NewAnalyticsDialog({ categories, onClose, onCreated }: {
+  categories: { id: number; name: string }[]; onClose: () => void; onCreated: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [cat, setCat] = useState<string>(String(categories[0]?.id ?? "new"));
+  const [newCat, setNewCat] = useState("");
+  const [desc, setDesc] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const cid = cat === "new" ? (await api.createCategory(newCat.trim())).id : Number(cat);
+      await api.createAnalytics(name.trim(), cid, desc.trim() || undefined);
+      onCreated();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ok = name.trim() && (cat !== "new" || newCat.trim());
+  return (
+    <Modal title="New analytics" onClose={onClose}>
+      <div className="space-y-3">
+        <div>
+          <label className="label" htmlFor="an-name">Name</label>
+          <input id="an-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. QueueLength" autoFocus />
+        </div>
+        <div>
+          <label className="label" htmlFor="an-cat">Category</label>
+          <select id="an-cat" className="input" value={cat} onChange={(e) => setCat(e.target.value)}>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value="new">+ New category…</option>
+          </select>
+          {cat === "new" && <input className="input mt-2" value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="Category name" aria-label="New category name" />}
+        </div>
+        <div>
+          <label className="label" htmlFor="an-desc">Description (optional)</label>
+          <textarea id="an-desc" className="input min-h-[4rem]" value={desc} onChange={(e) => setDesc(e.target.value)} />
+        </div>
+        {err && <ErrorBox>{err}</ErrorBox>}
+        <div className="flex justify-end gap-2">
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={!ok || busy} onClick={submit}>{busy ? <Spinner /> : null} Add analytics</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

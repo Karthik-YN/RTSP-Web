@@ -114,6 +114,7 @@ class StreamCreate(BaseModel):
     start_now: bool = True
     note: str | None = Field(default=None, max_length=500)
     protected: bool = False
+    slot_id: int | None = Field(default=None, description="Analytics video placeholder this stream runs")
 
 
 class StreamUpdate(BaseModel):
@@ -175,6 +176,7 @@ class StreamOut(BaseModel):
     note: str | None = None
     protected: bool = False
     group_id: int | None = None
+    slot_id: int | None = None
     warnings: list[str] = []
     runtime: dict[str, Any] = {}
 

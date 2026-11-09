@@ -41,6 +41,8 @@ def test_full_lifecycle(rig_factory):
         finally:
             reader.terminate()
             reader.wait()
+        wait_for(lambda: rig.stream(s["id"])["runtime"]["viewer_count"] == 0, 10, desc="viewer gone")
+        assert rig.stream(s["id"])["runtime"]["viewer_peak_today"] == 1  # the day's peak is kept
 
         # Detail panel data
         d = rig.stream(s["id"])

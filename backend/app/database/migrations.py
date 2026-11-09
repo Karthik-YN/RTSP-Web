@@ -13,6 +13,34 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
+# The analytics offered in the dashboard's left taskbar (v4 seed). People can
+# add, rename and reorder them afterwards.
+ANALYTICS_SEED: list[tuple[str, list[str]]] = [
+    ("Traffic", ["Charging station", "videoANPR", "TrafficCongestion", "VehicleALPR", "VehicleDwell"]),
+    ("People", ["Camera Tampering", "SlipAndFall", "CrowdDensity", "RegionCount", "LineCount", "PPE",
+                "AbandonedObject", "DigitalFence", "Human Attributes"]),
+    ("Earth Science", ["Elephant", "FireSmoke"]),
+    ("Parking", ["Parking"]),
+]
+_NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')"
+
+
+def _seed_sql() -> str:
+    def q(s: str) -> str:
+        return "'" + s.replace("'", "''") + "'"
+
+    lines = []
+    for ci, (cat, names) in enumerate(ANALYTICS_SEED):
+        lines.append(f"INSERT INTO analytics_categories (name, sort, created_at) VALUES ({q(cat)}, {ci}, {_NOW_SQL});")
+        for ai, name in enumerate(names):
+            lines.append(
+                "INSERT INTO analytics (category_id, name, sort, created_at) "
+                f"SELECT id, {q(name)}, {ai}, {_NOW_SQL} FROM analytics_categories WHERE name = {q(cat)};")
+    return "\n".join(lines) + "\n"
+
+
+_ANALYTICS_SEED_SQL = _seed_sql()
+
 MIGRATIONS: list[tuple[int, str]] = [
     (
         1,
@@ -135,6 +163,40 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX ix_status_history_stream_ts ON status_history(stream_id, ts);
         """,
+    ),
+    (
+        4,
+        """
+        CREATE TABLE analytics_categories (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+            sort        INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT    NOT NULL
+        );
+        CREATE TABLE analytics (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL REFERENCES analytics_categories(id) ON DELETE RESTRICT,
+            name        TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+            description TEXT,
+            sort        INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT    NOT NULL
+        );
+        CREATE INDEX ix_analytics_category ON analytics(category_id);
+        CREATE TABLE analytics_slots (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            analytics_id INTEGER NOT NULL REFERENCES analytics(id) ON DELETE RESTRICT,
+            title        TEXT    NOT NULL,
+            description  TEXT,
+            video_id     INTEGER REFERENCES videos(id) ON DELETE SET NULL,
+            sort         INTEGER NOT NULL DEFAULT 0,
+            created_by   TEXT,
+            created_at   TEXT    NOT NULL,
+            updated_at   TEXT    NOT NULL
+        );
+        CREATE INDEX ix_slots_analytics ON analytics_slots(analytics_id);
+        ALTER TABLE streams ADD COLUMN slot_id INTEGER REFERENCES analytics_slots(id) ON DELETE SET NULL;
+        CREATE INDEX ix_streams_slot ON streams(slot_id);
+        """ + _ANALYTICS_SEED_SQL,
     ),
 ]
 

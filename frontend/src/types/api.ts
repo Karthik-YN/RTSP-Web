@@ -7,6 +7,7 @@ export interface Reader {
   type: string | null;
   id: string | null;
   remote_addr: string | null;
+  hostname?: string | null;
   since: string | null;
   bytes_sent: number | null;
   transport: string | null;
@@ -29,6 +30,8 @@ export interface StreamRuntime {
   path_known: boolean;
   readers: Reader[];
   viewer_count: number;
+  viewer_peak_today: number;
+  preview_watchers: number;
   bytes_received: number | null;
   ingest_bps: number | null;
   egress_bps: number | null;
@@ -76,6 +79,7 @@ export interface Stream {
   note: string | null;
   protected: boolean;
   group_id: number | null;
+  slot_id: number | null;
   warnings: string[];
   runtime: StreamRuntime;
 }
@@ -255,4 +259,54 @@ export interface BulkResult {
   ok: number;
   failed: number;
   results: { id: number; name?: string; ok: boolean; result?: string; error?: string }[];
+}
+
+export interface AnalyticsCounts {
+  streams: number;
+  running: number;
+  problems: number;
+  viewers: number;
+}
+
+export interface AnalyticsItem extends AnalyticsCounts {
+  id: number;
+  name: string;
+  description: string | null;
+  sort: number;
+  slots: number;
+  slot_ids: number[];
+}
+
+export interface AnalyticsCategory {
+  id: number;
+  name: string;
+  sort: number;
+  analytics: AnalyticsItem[];
+}
+
+export interface AnalyticsSlot {
+  id: number;
+  analytics_id: number;
+  title: string;
+  description: string | null;
+  sort: number;
+  video: Video | null;
+  streams: Stream[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnalyticsDetail extends AnalyticsCounts {
+  id: number;
+  name: string;
+  description: string | null;
+  category: { id: number; name: string };
+  slots: AnalyticsSlot[];
+}
+
+export interface RunResult {
+  created: Stream[];
+  errors: { name: string; error: string }[];
+  skipped: string[];
 }

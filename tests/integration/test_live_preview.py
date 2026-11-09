@@ -28,7 +28,9 @@ def test_live_preview_over_hls_proxy(rig_factory):
         assert seg.status_code == 200 and len(seg.content) > 1000
 
         # the preview must not look like a camera viewer
-        assert rig.stream(s["id"])["runtime"]["viewer_count"] == 0
+        rt = rig.stream(s["id"])["runtime"]
+        assert rt["viewer_count"] == 0 and rt["viewer_peak_today"] == 0
+        assert rt["preview_watchers"] == 1  # counted separately
 
         assert c.get(f"{base}/..%2F..%2Fsecret").status_code == 404  # no path tricks
         c.post(f"/api/streams/{s['id']}/stop")

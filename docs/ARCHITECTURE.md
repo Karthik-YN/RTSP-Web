@@ -63,6 +63,9 @@ Turn recorded videos into stable live RTSP "cameras" on the office Proxmox serve
 | `services/publisher_runner.py` | Per-stream runner: FFmpeg I/O, log rotation, state file, signal forwarding |
 | `services/alerts.py` | Webhook alerts (Teams/Slack), rate-limited, background thread |
 | `api/groups.py` | Stream groups, bulk actions, URL export |
+| `api/analytics.py` | Analytics taskbar tree, video placeholders, run N cameras from a placeholder, start/stop all, URL export |
+| `frontend/src/components/UploadQueue.tsx` | App-wide upload queue: drop anywhere, several files, keeps going across pages, resumable |
+| `frontend/src/pages/AnalyticsPage.tsx` | One analytics: placeholder cards, upload/attach, Run RTSP dialog, its streams |
 | `services/ffprobe_service.py` | Metadata, keyframe lookup (PTS+DTS), video-end detection, frame grabs |
 | `services/compatibility.py` | Codec policy: copy / transcode / reject with reasons |
 | `services/stream_supervisor.py` | Lifecycle, locks, state machine, failure classification, watchdogs |
@@ -135,7 +138,7 @@ Other streams are never affected.
 * Both services run as dedicated non-root users under systemd hardening (`ProtectSystem=strict`, `NoNewPrivileges`, no capabilities). The backend may only start, restart or stop `mediamtx.service` (polkit rule).
 * MediaMTX exposes only RTSP :8554. The Control API and metrics bind to 127.0.0.1. RTMP, HLS, WebRTC, SRT, MoQ, pprof and playback are disabled, which a test asserts. Publishing is loopback-only.
 
-## 9. Database schema (SQLite, `PRAGMA user_version` = 3)
+## 9. Database schema (SQLite, `PRAGMA user_version` = 4)
 
 **videos**: `id`, `rel_path` UNIQUE, `size_bytes`, `mtime_ns`, `inode`, `device`, `quick_hash`, `status` (READY|INVALID|MISSING), `error`, `container`, `duration_s`, `width`, `height`, `fps`, `fps_text`, `is_vfr`, `video_codec`, `video_profile`, `pix_fmt`, `bit_depth`, `field_order`, `bitrate_bps`, `audio_codec`, `keyframe_interval_s`, `compat_mode` (copy|transcode|reject), `compat_reasons` JSON, `compat_warnings` JSON, `probe_json`, `thumbnail`, `created_at`, `updated_at`, `last_seen_at`.
 
@@ -147,11 +150,14 @@ Other streams are never affected.
 
 **v3:** **status_history** (`id`, `stream_id`, `ts`, `status`, `detail`): one row per status change, pruned after 7 days. It feeds the 24 h availability bar and `GET /api/streams/{id}/history`.
 
+**v4:** analytics for the dashboard's left taskbar. **analytics_categories** (`id`, `name` UNIQUE NOCASE, `sort`), **analytics** (`id`, `category_id` → categories (RESTRICT), `name` UNIQUE NOCASE, `description`, `sort`), **analytics_slots** (video placeholders: `id`, `analytics_id` → analytics (RESTRICT), `title`, `description`, `video_id` → videos (SET NULL), `sort`, `created_by`, `created_at`, `updated_at`) and `streams.slot_id` → analytics_slots (SET NULL). The migration seeds Traffic, People, Earth Science and Parking with their 17 analytics (`ANALYTICS_SEED` in `migrations.py`). Deletes are refused while something depends on the row, so a placeholder can't vanish under running cameras; deleting a video only empties its placeholders.
+
 Users stay in the hashed users file (not SQLite): atomic writes, works with the CLI and is backed up nightly.
 
 ## 9a. Observability
 
 * **Live preview:** browsers can't play RTSP, so the dashboard plays the same video as HLS (`hls.js`; native in Safari). MediaMTX's HLS server binds to loopback and the backend proxies it at `/api/streams/{id}/live/`, so no port is added and the login applies. There is no re-encoding, and HLS is generated only while someone watches (closed after 60 s idle). Preview sessions are excluded from viewer counts. MediaMTX needs 3 segments before the first playlist and a segment can't be shorter than the keyframe interval, so the first picture takes about 4.5 s with 2 s keyframes and 20 to 30 s with 10 s keyframes. The RTSP URL isn't affected.
+* **Viewers:** the count is RTSP readers from MediaMTX (the edge, VLC, test tools). Each reader shows its address and, when reverse DNS knows it, its host name (looked up in the background, cached 10 min). The day's peak is kept per stream in memory, so it restarts at 0 after a backend restart. Dashboard preview watchers are counted separately: the backend notes each distinct browser (address + user agent) fetching the stream's HLS playlist and counts those seen in the last 20 s.
 * **Alerts** (`RTSPM_ALERT_WEBHOOK_URL`): stream errors, lost source files, stalls, MediaMTX down/up, boot recovery result, new resource warnings. Rate-limited per (kind, stream).
 * **Prometheus** `/api/metrics`; **bitrate** per stream (ingest/egress from MediaMTX byte counters) and total egress, with a warning above `RTSPM_NET_WARN_MBPS`.
 * **Availability** per stream (24 h timeline); live preview thumbnails taken from the source file at the current playback position (no RTSP reader, so viewer counts stay accurate).

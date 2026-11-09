@@ -1,4 +1,5 @@
 import type {
+  AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, RunResult,
   AppConfig, BulkResult, StreamGroup, StreamHistory, AppEvent, MediaMTXStatus, Stream, StreamDetail, SystemInfo, UploadCheck, User,
   ValidateResult, Video,
 } from "../types/api";
@@ -72,6 +73,23 @@ export interface StreamInput {
   start_now?: boolean;
   note?: string | null;
   protected?: boolean;
+  slot_id?: number | null;
+}
+
+export interface RunInput {
+  count: number;
+  name_prefix?: string | null;
+  start: string | null;
+  end: string | null;
+  mode: "loop" | "once";
+  force_transcode?: boolean;
+  start_now?: boolean;
+}
+
+async function text(url: string, what: string): Promise<string> {
+  const r = await fetch(url, { credentials: "same-origin" });
+  if (!r.ok) throw new ApiError(r.status, `Could not load ${what}.`);
+  return r.text();
 }
 
 export interface StreamMetaInput {
@@ -131,6 +149,26 @@ export const api = {
   bulk: (stream_ids: number[], action: "start" | "stop" | "restart" | "delete") =>
     request<BulkResult>("POST", "/api/streams/bulk", { stream_ids, action }),
   deleteVideo: (id: number) => request<{ message: string }>("DELETE", `/api/videos/${id}`),
+  analyticsTree: () => request<AnalyticsCategory[]>("GET", "/api/analytics"),
+  analytics: (id: number) => request<AnalyticsDetail>("GET", `/api/analytics/${id}`),
+  createAnalytics: (name: string, category_id: number, description?: string) =>
+    request<{ id: number }>("POST", "/api/analytics", { name, category_id, description }),
+  updateAnalytics: (id: number, body: { name?: string; description?: string; category_id?: number }) =>
+    request<{ id: number }>("PATCH", `/api/analytics/${id}`, body),
+  deleteAnalytics: (id: number) => request<void>("DELETE", `/api/analytics/${id}`),
+  createCategory: (name: string) => request<{ id: number }>("POST", "/api/analytics/categories", { name }),
+  analyticsAction: (id: number, action: "start" | "stop" | "restart") =>
+    request<BulkResult>("POST", `/api/analytics/${id}/${action}`),
+  analyticsUrls: (id: number, format: "txt" | "csv" = "txt") =>
+    text(`/api/analytics/${id}/urls?format=${format}`, "the RTSP URLs"),
+  createSlot: (analyticsId: number, body: { title: string; description?: string | null; video_id?: number | null }) =>
+    request<AnalyticsSlot>("POST", `/api/analytics/${analyticsId}/slots`, body),
+  updateSlot: (id: number, body: { title?: string; description?: string; video_id?: number; clear_video?: boolean }) =>
+    request<AnalyticsSlot>("PATCH", `/api/analytics/slots/${id}`, body),
+  deleteSlot: (id: number) => request<void>("DELETE", `/api/analytics/slots/${id}`),
+  reorderSlots: (analyticsId: number, slot_ids: number[]) =>
+    request<{ ok: boolean }>("POST", `/api/analytics/${analyticsId}/slots/reorder`, { slot_ids }),
+  runSlot: (id: number, body: RunInput) => request<RunResult>("POST", `/api/analytics/slots/${id}/streams`, body),
   history: (id: number, hours = 24) => request<StreamHistory>("GET", `/api/streams/${id}/history?hours=${hours}`),
 };
 

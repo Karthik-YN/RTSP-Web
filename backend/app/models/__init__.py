@@ -143,6 +143,45 @@ class Stream(Base):
     note: Mapped[str | None] = mapped_column(Text)
     protected: Mapped[bool] = mapped_column(Integer, default=0)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("stream_groups.id", ondelete="SET NULL"))
+    slot_id: Mapped[int | None] = mapped_column(ForeignKey("analytics_slots.id", ondelete="SET NULL"))
+
+
+class AnalyticsCategory(Base):
+    __tablename__ = "analytics_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class Analytics(Base):
+    """One analytics use case (e.g. PPE) shown in the left taskbar."""
+
+    __tablename__ = "analytics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("analytics_categories.id", ondelete="RESTRICT"))
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class AnalyticsSlot(Base):
+    """A video placeholder inside an analytics: title, description and (optionally) a video."""
+
+    __tablename__ = "analytics_slots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analytics_id: Mapped[int] = mapped_column(ForeignKey("analytics.id", ondelete="RESTRICT"))
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id", ondelete="SET NULL"))
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
 class StreamGroup(Base):
