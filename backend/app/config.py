@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     log_dir: Path | None = None  # default: <data_dir>/logs
     thumbnail_dir: Path | None = None  # default: <data_dir>/thumbnails
     run_dir: Path | None = None  # default: <data_dir>/run (playlists)
+    # Lead-in slates. MediaMTX reads these files, so on the systemd install
+    # (MediaMTX runs as its own user) this is a directory it can reach.
+    slate_dir: Path | None = None  # default: <data_dir>/slates
     db_path: Path | None = None  # default: <data_dir>/rtsp-manager.db
     frontend_dist: Path | None = None  # built React app; served at "/"
 
@@ -117,6 +120,23 @@ class Settings(BaseSettings):
     source_check_interval_s: float = 3.0
     monitor_interval_s: float = 2.0
 
+    # ---------------------------------------------------------- start spacing
+    # Every publisher start waits until the previous one is on air plus this
+    # many seconds, so the edge never gets identical frames from two cameras
+    # at once (0 disables the queue). See services/start_gate.py.
+    start_spacing_s: float = 2.0
+    start_ready_wait_s: float = 5.0  # stop waiting for a start that never comes on air
+    start_phase_margin_s: float = 0.25  # extra content gap for streams of the same video
+
+    # --------------------------------------------------------------- lead-in
+    # A per-stream "slate" (black, stream name, running clock) on the URL before
+    # the video: for a fixed time, or until the first viewer connects + N s.
+    default_lead_in_mode: Literal["none", "fixed", "hold"] = "fixed"  # for new streams
+    default_lead_in_s: float = 5.0
+    slate_seconds: int = 10  # length of the slate clip MediaMTX loops
+    slate_timeout_s: float = 60.0  # max time to render one slate
+    slate_font: str = ""  # optional font file for the slate text (else fontconfig default)
+
     # ------------------------------------------------------------- recovery
     recovery_concurrency: int = 8
     recovery_transcode_concurrency: int = 2
@@ -180,6 +200,10 @@ class Settings(BaseSettings):
     @property
     def thumbnail_path(self) -> Path:
         return self.thumbnail_dir or self.data_dir / "thumbnails"
+
+    @property
+    def slate_path(self) -> Path:
+        return self.slate_dir or self.data_dir / "slates"
 
     @property
     def run_path(self) -> Path:

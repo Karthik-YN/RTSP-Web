@@ -58,6 +58,12 @@ class Rig:
             disk_reserve_bytes=0, disk_reserve_percent=0, restart_backoff_initial_s=0.5,
             source_check_interval_s=1.0, monitor_interval_s=1.0, recovery_mediamtx_wait_s=20,
             frontend_dist=base / "no-frontend",
+            # Start spacing (2 s between starts) is tested on its own; elsewhere it
+            # would only slow the suite down.
+            start_spacing_s=0,
+            # New streams default to a 5 s lead-in in production; tests that are not
+            # about the lead-in keep today's start-at-once behaviour.
+            default_lead_in_mode="none",
         )
         params.update(overrides)
         self.settings = Settings(_env_file=None, **params)

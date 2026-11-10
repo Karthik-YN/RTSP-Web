@@ -73,7 +73,7 @@ class HostnameCache:
 @dataclass
 class PathInfo:
     name: str
-    ready: bool
+    ready: bool  # a publisher is online (not just a lead-in slate)
     ready_time: str | None
     source_type: str | None
     tracks: list[str]
@@ -82,6 +82,7 @@ class PathInfo:
     readers: list[dict] = field(default_factory=list)
     ingest_bps: float | None = None  # publisher -> MediaMTX
     egress_bps: float | None = None  # MediaMTX -> all readers
+    available: bool = False  # readers get something: the publisher or the lead-in slate
 
 
 class ControlError(RuntimeError):
@@ -226,6 +227,61 @@ class MediaMTXService:
         self.hostnames = HostnameCache()
         self._preview_seen: dict[str, dict[str, float]] = {}  # path -> {client: last seen (monotonic)}
         self._peaks: dict[str, tuple[date, int]] = {}  # path -> (day, max RTSP viewers that day)
+        self.slate_paths: dict[str, str] = {}  # path name -> slate file MediaMTX loops on it
+
+    # ------------------------------------------------------------ lead-in slates
+    @staticmethod
+    def slate_config(file: str) -> dict:
+        # MediaMTX refuses alwaysAvailable together with runOnDemand (the hold
+        # used by all_others), so this path turns it off.
+        return {"alwaysAvailable": True, "alwaysAvailableFile": file, "runOnDemand": "", "runOnUnDemand": ""}
+
+    async def set_slate(self, name: str, file: str) -> None:
+        """Put the slate on ``name``'s URL (an "always available" path)."""
+        body = self.slate_config(file)
+        r = await self.client.post(f"/v3/config/paths/add/{name}", json=body)
+        if r.status_code == 400 and "already exists" in r.text:
+            if self.slate_paths.get(name) == file or await self._has_slate(name, file):
+                self.slate_paths[name] = file  # e.g. still there after a backend restart
+                return
+            # replacing reloads the path (readers reconnect): only when it really differs
+            r = await self.client.post(f"/v3/config/paths/replace/{name}", json=body)
+        if r.status_code >= 300:
+            raise ControlError(f"MediaMTX refused the lead-in path for '{name}': {r.status_code} {r.text[:200]}")
+        self.slate_paths[name] = file
+
+    async def _has_slate(self, name: str, file: str) -> bool:
+        try:
+            r = await self.client.get(f"/v3/config/paths/get/{name}")
+            j = r.json() if r.status_code == 200 else {}
+        except Exception:
+            return False
+        return bool(j.get("alwaysAvailable")) and j.get("alwaysAvailableFile") == file
+
+    async def clear_slate(self, name: str) -> None:
+        """Remove the slate path; the URL then behaves like any other (fails when stopped)."""
+        self.slate_paths.pop(name, None)
+        r = await self.client.delete(f"/v3/config/paths/delete/{name}")
+        if r.status_code not in (200, 404):
+            raise ControlError(f"MediaMTX did not remove the lead-in path for '{name}': {r.status_code}")
+
+    async def configured_paths(self) -> set[str]:
+        r = await self.client.get("/v3/config/paths/list", params={"itemsPerPage": 10000})
+        r.raise_for_status()
+        return {it["name"] for it in r.json().get("items") or []}
+
+    async def restore_slates(self) -> list[str]:
+        """MediaMTX forgets API-added paths when it restarts: add back any that are missing."""
+        if not self.slate_paths:
+            return []
+        have = await self.configured_paths()
+        restored = []
+        for name, file in list(self.slate_paths.items()):
+            if name not in have:
+                r = await self.client.post(f"/v3/config/paths/add/{name}", json=self.slate_config(file))
+                if r.status_code < 300 or "already exists" in r.text:
+                    restored.append(name)
+        return restored
 
     # ------------------------------------------------------------ polling
     async def fetch(self) -> dict[str, PathInfo]:
@@ -255,8 +311,12 @@ class MediaMTXService:
             src = it.get("source") or {}
             paths[it["name"]] = PathInfo(
                 name=it["name"],
-                ready=bool(it.get("ready", it.get("available", False))),
-                ready_time=it.get("readyTime") or it.get("availableTime"),
+                # An "always available" path (lead-in slate) is ready/available with
+                # no publisher; only "online" (MediaMTX >= 1.15) means the video is up.
+                ready=bool(it["online"]) if "online" in it else bool(it.get("ready", it.get("available", False))),
+                available=bool(it.get("available", it.get("ready", False))),
+                ready_time=(it.get("onlineTime") if "online" in it else None) or it.get("readyTime")
+                or it.get("availableTime"),
                 source_type=src.get("type"),
                 tracks=list(it.get("tracks") or []),
                 bytes_received=int(it.get("bytesReceived") or 0),

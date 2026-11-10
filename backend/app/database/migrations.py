@@ -198,6 +198,17 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX ix_streams_slot ON streams(slot_id);
         """ + _ANALYTICS_SEED_SQL,
     ),
+    (
+        5,
+        # Lead-in (slate before the video). Existing streams keep today's behaviour.
+        """
+        ALTER TABLE streams ADD COLUMN lead_in_mode TEXT NOT NULL DEFAULT 'none'
+            CHECK (lead_in_mode IN ('none', 'fixed', 'hold'));
+        ALTER TABLE streams ADD COLUMN lead_in_s REAL NOT NULL DEFAULT 5
+            CHECK (lead_in_s >= 0 AND lead_in_s <= 120);
+        ALTER TABLE streams ADD COLUMN hold_max_s REAL CHECK (hold_max_s IS NULL OR hold_max_s > 0);
+        """,
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

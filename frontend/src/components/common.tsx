@@ -50,15 +50,18 @@ const STATUS_STYLE: Record<StreamStatus, string> = {
   STOPPED: "bg-slate-500/10 text-muted ring-slate-500/20",
   ERROR: "bg-red-500/10 text-red-700 ring-red-500/30 dark:text-red-300",
   COMPLETED: "bg-violet-500/10 text-violet-700 ring-violet-500/30 dark:text-violet-300",
+  LEAD_IN: "bg-sky-500/10 text-sky-700 ring-sky-500/30 dark:text-sky-300",
+  WAITING_FOR_VIEWER: "bg-indigo-500/10 text-indigo-700 ring-indigo-500/30 dark:text-indigo-300",
 };
 
 const STATUS_LABEL: Record<StreamStatus, string> = {
   RUNNING: "Live", STARTING: "Starting", RESTARTING: "Restarting", STOPPING: "Stopping",
   STOPPED: "Stopped", ERROR: "Error", COMPLETED: "Completed",
+  LEAD_IN: "Lead-in", WAITING_FOR_VIEWER: "Waiting for viewer",
 };
 
 export function StatusBadge({ status, title }: { status: StreamStatus; title?: string | null }) {
-  const pulse = status === "STARTING" || status === "RESTARTING" || status === "RUNNING";
+  const pulse = status === "STARTING" || status === "RESTARTING" || status === "RUNNING" || status === "LEAD_IN";
   return (
     <span title={title ?? status}
       className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${STATUS_STYLE[status]}`}>

@@ -4,6 +4,7 @@ import { formatDuration, formatTime, parseTime, suggestName, validateName } from
 import type { AppConfig, Stream, ValidateResult, Video } from "../types/api";
 import { LivePlayer } from "./LivePlayer";
 import { CopyButton, ErrorBox, Modal, Pill, Spinner, WarnBox } from "./common";
+import { leadInBody, leadInError, LeadInFields, type LeadInValue } from "./LeadIn";
 
 export interface StreamTemplate {
   videoId: number; name?: string; start?: string; end?: string; mode?: "loop" | "once"; forceTranscode?: boolean;
@@ -24,6 +25,8 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
   const [end, setEnd] = useState(template?.end ?? "");
   const [mode, setMode] = useState<"loop" | "once">(template?.mode ?? "loop");
   const [forceTranscode, setForceTranscode] = useState(template?.forceTranscode ?? false);
+  const [lead, setLead] = useState<LeadInValue>({
+    mode: config.default_lead_in_mode ?? "fixed", seconds: config.default_lead_in_s ?? 5, holdMax: null });
   const [slider, setSlider] = useState(0);
   const [server, setServer] = useState<ValidateResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -77,14 +80,15 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
   }, [videoId, name, start, end, mode, forceTranscode, rangeError]);
 
   const serverErrors = server?.errors ?? [];
-  const canSubmit = !!body && !nameError && !rangeError && !submitting && server?.ok === true;
+  const canSubmit = !!body && !nameError && !rangeError && !submitting && server?.ok === true
+    && (lead.mode === "none" || !leadInError(String(lead.seconds)));
 
   const submit = async () => {
     if (!body) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const s = await api.create({ ...body, start_now: true });
+      const s = await api.create({ ...body, start_now: true, ...leadInBody(lead) });
       setCreated(s);
       onCreated();
     } catch (e) {
@@ -155,6 +159,8 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
               <label className="flex items-center gap-1.5"><input type="radio" checked={mode === "once"} onChange={() => setMode("once")} /> Play once</label>
               <span className="text-subtle">Speed 1x (fixed)</span>
             </div>
+            <span className="label mt-3">Lead-in (before the video)</span>
+            <LeadInFields value={lead} onChange={setLead} idPrefix="create-lead" />
           </div>
 
           <div className="md:col-span-2">

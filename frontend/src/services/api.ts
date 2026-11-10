@@ -1,7 +1,7 @@
 import type {
   AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, RunResult,
   AppConfig, BulkResult, StreamGroup, StreamHistory, AppEvent, MediaMTXStatus, Stream, StreamDetail, SystemInfo, UploadCheck, User,
-  ValidateResult, Video,
+  ValidateResult, Video, LeadInMode,
 } from "../types/api";
 
 /** Error carrying the server's message (FastAPI `detail`) and extra fields. */
@@ -74,6 +74,9 @@ export interface StreamInput {
   note?: string | null;
   protected?: boolean;
   slot_id?: number | null;
+  lead_in_mode?: LeadInMode;
+  lead_in_s?: number;
+  hold_max_s?: number | null;
 }
 
 export interface RunInput {
@@ -84,6 +87,9 @@ export interface RunInput {
   mode: "loop" | "once";
   force_transcode?: boolean;
   start_now?: boolean;
+  lead_in_mode?: LeadInMode;
+  lead_in_s?: number;
+  hold_max_s?: number | null;
 }
 
 async function text(url: string, what: string): Promise<string> {
@@ -96,6 +102,10 @@ export interface StreamMetaInput {
   note?: string;
   protected?: boolean;
   owner?: string;
+  lead_in_mode?: LeadInMode;
+  lead_in_s?: number;
+  hold_max_s?: number | null;
+  clear_hold_max?: boolean;
 }
 
 export const api = {
@@ -134,6 +144,7 @@ export const api = {
     request<Stream>("PATCH", `/api/streams/${id}`, body, ifMatch(version)),
   action: (id: number, action: "start" | "stop" | "restart", version?: number) =>
     request<Stream>("POST", `/api/streams/${id}/${action}`, undefined, ifMatch(version)),
+  go: (id: number) => request<Stream>("POST", `/api/streams/${id}/go`),
   remove: (id: number, version?: number) => request<void>("DELETE", `/api/streams/${id}`, undefined, ifMatch(version)),
   groups: () => request<StreamGroup[]>("GET", "/api/groups"),
   createGroup: (name: string, stream_ids: number[]) => request<StreamGroup>("POST", "/api/groups", { name, stream_ids }),

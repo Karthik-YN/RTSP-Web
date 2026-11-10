@@ -5,6 +5,7 @@ import { api, ApiError } from "../services/api";
 import { formatBitrate, formatTime, since } from "../lib/format";
 import type { BulkResult, Stream, StreamGroup, User } from "../types/api";
 import { Avatar, ConfirmDialog, CopyButton, copyText, Pill, StatusBadge, useToast } from "./common";
+import { GoButton, leadText } from "./LeadIn";
 import { CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilmIcon, GridIcon, LockIcon, LoopIcon, MonitorIcon, PlayIcon, RestartIcon, SearchIcon, StopIcon, TrashIcon } from "./icons";
 
 type Action = "start" | "stop" | "restart" | "delete";
@@ -69,12 +70,23 @@ export function useStreamActions(onChanged: () => void) {
 type Filter = "all" | "live" | "problems" | "stopped" | "mine";
 
 const isLive = (s: Stream) => ["RUNNING", "STARTING", "RESTARTING"].includes(s.status);
-export const isProblem = (s: Stream) => s.status === "ERROR" || (s.desired_state === "RUNNING" && s.status !== "RUNNING");
+/** "Queued #3 · starts in ~5 s" while a stream waits for its start slot (2 s spacing), else null. */
+export function queueText(s: Stream): string | null {
+  const q = s.runtime?.start_queue;
+  if (!q) return null;
+  const eta = q.eta_s != null ? ` · starts in ~${Math.max(1, Math.ceil(q.eta_s))} s` : "";
+  return q.position === 1 ? `Next to start${eta}` : `Queued #${q.position}${eta}`;
+}
+
+export const isProblem = (s: Stream) =>
+  s.status === "ERROR" || (s.desired_state === "RUNNING" && s.status !== "RUNNING" && !s.runtime?.start_queue
+    && !s.runtime?.lead_in && s.status !== "LEAD_IN" && s.status !== "WAITING_FOR_VIEWER");
 
 const ACCENT: Record<string, string> = {
   RUNNING: "before:bg-emerald-500", STARTING: "before:bg-blue-500", RESTARTING: "before:bg-amber-500",
   STOPPING: "before:bg-slate-400", STOPPED: "before:bg-slate-300 dark:before:bg-slate-600",
   ERROR: "before:bg-red-500", COMPLETED: "before:bg-violet-500",
+  LEAD_IN: "before:bg-sky-500", WAITING_FOR_VIEWER: "before:bg-indigo-500",
 };
 
 export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown, groups = [], onGroupsChanged, onClone }: {
@@ -313,6 +325,23 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
                   {s.owner && !s.protected && user?.auth_enabled && <span className="ml-auto flex items-center gap-1" title={`Created by ${s.owner}`}><Avatar name={s.owner} /></span>}
                 </div>
 
+                {leadText(s) && (
+                  <div className="mt-2 flex items-center gap-2 rounded-md bg-sky-500/10 px-2 py-1 text-xs text-sky-800 dark:text-sky-300"
+                    onClick={(e) => e.stopPropagation()}
+                    title="The stream's slate is on its URL; the video follows the lead-in">
+                    <span className="flex-1">{leadText(s)}</span>
+                    {can && <GoButton s={s} onDone={onChanged} />}
+                  </div>
+                )}
+                {queueText(s) && (
+                  <p className="mt-2 rounded-md bg-blue-500/10 px-2 py-1 text-xs text-blue-700 dark:text-blue-300"
+                    title="Camera starts are kept 2 s apart so the edge never gets the same frame from two cameras at once">
+                    {queueText(s)}
+                  </p>
+                )}
+                {s.runtime?.spacing_warning && s.status !== "ERROR" && (
+                  <p className="mt-2 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300">{s.runtime.spacing_warning}</p>
+                )}
                 {problem && (
                   <p className={`mt-2 rounded-md px-2 py-1 text-xs ${s.status === "ERROR" ? "bg-red-500/10 text-red-700 dark:text-red-300" : "bg-amber-500/10 text-amber-800 dark:text-amber-300"}`}>
                     {s.status === "ERROR" ? (s.last_error ?? s.status_detail) : s.status_detail}

@@ -69,6 +69,8 @@ Turn recorded videos into stable live RTSP "cameras" on the office Proxmox serve
 | `services/ffprobe_service.py` | Metadata, keyframe lookup (PTS+DTS), video-end detection, frame grabs |
 | `services/compatibility.py` | Codec policy: copy / transcode / reject with reasons |
 | `services/stream_supervisor.py` | Lifecycle, locks, state machine, failure classification, watchdogs |
+| `services/start_gate.py` | Start queue (2 s spacing between camera starts) and the same-video phase rule |
+| `services/slate_service.py` | Lead-in slates: per-stream MP4 matching the publisher's format, cached and world-readable |
 | `services/mediamtx_service.py` | Health monitor, path/reader cache, systemd/process control |
 | `services/recovery_service.py` | Boot recovery and timing report |
 | `services/video_library.py`, `file_manager.py` | Scanning, identity, rename detection, uploads, disk reservations |
@@ -91,7 +93,9 @@ Desired state (`RUNNING` | `STOPPED`) is what users asked for and is persisted. 
   play-once segment finished (exit 0) ─────────────────────────────▶ COMPLETED (desired → STOPPED)
 ```
 
-`RUNNING` is reported only after the MediaMTX Control API says the path is ready. A stream whose FFmpeg is alive but whose path is not ready for 10 s is treated as stalled and restarted. A live PID is never taken as proof of health.
+With a lead-in (§5b), `create/start/restart` first goes through `STARTING` ("Preparing the lead-in") → `WAITING_FOR_VIEWER` (hold mode) → `LEAD_IN` (countdown) → `STARTING` (video queued, §5a) → `RUNNING`. Crash retries, loop rollovers and MediaMTX recovery skip the lead-in.
+
+`RUNNING` is reported only after the MediaMTX Control API says a **publisher is online** (`online`, not `ready`: an always-available lead-in path is "ready" with no publisher). A stream whose FFmpeg is alive but whose path is not ready for 10 s is treated as stalled and restarted. A live PID is never taken as proof of health.
 
 ## 5. Concurrency and process safety
 
@@ -102,6 +106,34 @@ Desired state (`RUNNING` | `STOPPED`) is what users asked for and is persisted. 
 * **Orphans:** on start, FFmpeg processes owned by the service user whose command line references our playlist directory are terminated. On shutdown every publisher gets SIGTERM, then SIGKILL after 5 s, and the desired state is kept.
 * **MediaMTX `overridePublisher: no`**: a second publisher on a path is rejected rather than hijacking it. Publishing is only allowed from 127.0.0.1.
 * **Uploads:** disk space is reserved (free − safety reserve − other in-flight uploads) before any byte is written. Data goes to a temp file on the same filesystem and is hard-linked into place only when complete, so a file is never visible half-written and an existing file is never overwritten.
+
+## 5a. Start spacing (edge de-duplication)
+
+The edge discards identical frames that arrive together from several cameras. Two rules keep cameras apart (`services/start_gate.py`):
+
+* **One start queue.** Every publisher start goes through one first-in-first-out queue (`StartGate`). That covers start, restart, create, Run N cameras, Start all, crash retries, MediaMTX coming back and boot recovery, because all of them go through `_spawn`. A start is launched only once the previous one is **on air** (MediaMTX reports the path ready) **and** `RTSPM_START_SPACING_S` (2 s) has passed. Measuring from "on air" rather than from the launch makes the gap independent of FFmpeg's start-up time (0.3–1 s). If the previous start isn't on air within `RTSPM_START_READY_WAIT_S` (5 s), the queue moves on. Requests return at once: queued streams are `STARTING` with `runtime.start_queue = {position, eta_s}` ("Queued #3 · starts in ~5 s"). Stop or delete takes a queued stream out at once. Re-adopted publishers (after a backend restart) are never queued, because they never stopped.
+* **Same-video phase rule.** Streams of the same file and segment loop with the same period, so a camera restarted later can land on the frame another camera is showing (for example, a restart 60 s later on a 30 s loop). Before launching, the queue works out which frame every running stream of that video shows. For each one it takes the earliest `progress report time − media time sent`, the same measurement for every stream so the systematic error cancels. It also learns how long a new publisher takes to send its first frame (FFmpeg ≥ 7 sends a 0.5 s initial burst). Then it delays the start until the new camera is at least spacing + `RTSPM_START_PHASE_MARGIN_S` (2.25 s) of content away from all of them. If the clip is too short for that many cameras (6 cameras need more than 13.5 s), it waits at most 2 × 2.25 s for the least-bad moment, starts anyway, and sets `runtime.spacing_warning` and a `stream.spacing_short` event.
+* **Cost.** Starts are one at a time, about 2.3–2.5 s per copy-mode stream. Measured: 6 cameras of one video were on air within 12.2 s, and a reboot recovery of 16 streams took 36.6 s (gaps 2.33–2.39 s). Around 48 streams fit the ticket's 2-minute reboot target, and 100 streams take about 4 minutes.
+* **Not covered.** Streams of the same file with *different* segments have different loop lengths and drift relative to each other, so they can briefly show the same frame from time to time. Only identical file + segment pairs are kept apart.
+* **Measured end to end** (`tests/integration/test_start_spacing.py`, which matches every reader's decoded frames to source frame numbers): the closest pair of 6 cameras was 2.28 s apart; a restart placed on a loop multiple was 2.24–2.32 s apart (4 runs); the closest of 8 cameras after reboot recovery was 2.20 s apart.
+
+## 5b. Lead-in (slate before the video)
+
+Proven in the Phase 1 spike (`docs/SPIKE_LEADIN.md`); built in `services/slate_service.py` and the lead-in section of `stream_supervisor.py`.
+
+* **Per stream:** `lead_in_mode` `none` | `fixed` | `hold`, `lead_in_s` (0–120, default 5), `hold_max_s` (hold: start anyway after this, default never). New streams default to **fixed 5 s** (`RTSPM_DEFAULT_LEAD_IN_MODE`, `RTSPM_DEFAULT_LEAD_IN_S`). Streams that existed before migration v5 keep `none`. Changes apply at the next start or restart.
+* **Slate:** a 10 s H.264 MP4 per stream, black with the stream name and a running clock (`drawtext`), or a colour band from the name plus a counter where FFmpeg has no drawtext (Homebrew's macOS build). Every camera's slate frames are unique, so the edge doesn't drop them as duplicates. It's made with exactly the publisher's width, height, frame rate and H.264 profile. For transcoded streams it goes through the same scale filter, so readers see no format change at the switch. Cached in `<data_dir>/slates/<stream>-<hash>.mp4` (0644: MediaMTX runs as its own user on the systemd install; `install.sh` makes `/var/lib/rtsp-manager` 0751 and `slates/` 0755). It's rebuilt when the name, video, segment or output changes, and deleted with the stream.
+* **On the URL:** on start the backend adds the stream's path through the MediaMTX API with `alwaysAvailable` and the slate file (`runOnDemand` off, which MediaMTX requires). Readers can connect at any time and get the slate. When the publisher starts, MediaMTX switches the **same reader session** to the video, and back to the slate if the publisher stops or crashes. **Stop**, **delete**, a completed play-once stream and an invalid source remove the path, so the URL fails exactly as it did before lead-ins existed. MediaMTX forgets API-added paths when it restarts, so the backend re-adds them on "MediaMTX up" and checks every 5 s.
+* **Fixed:** the slate goes on the URL, and after `lead_in_s` the video start enters the start queue (§5a). The slate therefore shows for at least `lead_in_s`, and longer if cameras are queued.
+* **Hold:** `WAITING_FOR_VIEWER` until MediaMTX lists an RTSP reader on the path (the dashboard's HLS preview doesn't count). Then `LEAD_IN` for `lead_in_s`, then the video. **Start video now** (`POST /api/streams/{id}/go`) skips the wait. A `hold_max_s` timeout starts the video anyway.
+* **Restart from the UI:** the path stays, so the edge stays connected on the slate, the lead-in runs again, then the video starts. **Publisher crash:** the edge sees the slate, and the retry brings the video back with no lead-in (measured: 0.9 s, same reader session, video from the start frame). **Boot recovery** runs every stream's lead-in again; a stream counts as recovered once its slate is on the URL.
+* **Measured** (`tests/integration/test_lead_in.py`, readers' frames matched to the source):
+  * Fixed 5 s: the reader joined during the lead-in and got 4.2 s of slate, then the video from exactly the configured start frame, with no lost or repeated frame.
+  * Hold: no publisher until a reader connected; the viewer was seen within 1.1 s and the video started 3 s later.
+  * Restart and crash: one reader session saw video → slate → video → slate → video.
+  * Slates of 3 cameras: no identical frame across cameras. Their videos are still ≥ 2.2 s apart (§5a).
+  * The switch pause (80–160 ms of extra slate, no lost video frame) was measured in the spike and accepted.
+* **Not verified here:** the real 5.x edge (see the edge check in `docs/SPIKE_LEADIN.md`), and VLC.
 
 ## 6. Source-file lifecycle
 
@@ -122,7 +154,7 @@ Other streams are never affected.
 
 **Backend restart / upgrade (not a reboot):** with MediaMTX running separately (systemd), `KillMode=process` stops only the backend. Publishers keep playing. On start the backend first marks every desired-running stream "recovering", then **adopts** each publisher whose runner and FFmpeg are alive and whose command line equals what the current configuration would start. A publisher with an outdated command is replaced (one brief reconnect), and anything else matching our run directory is terminated. Boot recovery owns startup exclusively (`supervisor.recovering`), so the MediaMTX "up" handler cannot race it into creating a second publisher. Measured: an RTSP reader stayed connected through a full backend stop/start (max gap 80 ms, same PID); under systemd in Debian, `systemctl restart rtsp-manager` kept PID and stream.
 
-**Boot:** systemd starts MediaMTX, then the backend. The backend reaps orphans, normalizes runtime status, waits for the Control API (starting MediaMTX itself if it manages it), then starts every desired-`RUNNING` stream in parallel (8 at a time, transcodes 2 at a time). Each stream is verified as `ready` in MediaMTX. `GET /api/system/recovery` reports each stream's ready time in seconds after OS boot.
+**Boot:** systemd starts MediaMTX, then the backend. The backend reaps orphans, normalizes runtime status, waits for the Control API (starting MediaMTX itself if it manages it), then starts every desired-`RUNNING` stream through the start queue (§5a: one at a time, 2 s after the previous is on air). Each stream is verified as `ready` in MediaMTX. `GET /api/system/recovery` reports each stream's ready time in seconds after OS boot.
 
 **MediaMTX crash while the backend runs:** a publisher that dies while MediaMTX is unreachable is marked "waiting for MediaMTX" and republished **as soon as the API answers again**, whether or not an outage was ever declared. (systemd restarts MediaMTX in about 1 s, faster than two failed polls; found in the systemd container test, where streams otherwise waited forever.) The API is polled every 2 s and 2 failures mark it DOWN (≤ ~5 s; measured 1.6 s after `kill -9`). Every desired-`RUNNING` stream is marked "waiting for MediaMTX". The service is started, or restarted if it is alive but hung for more than 15 s, via systemd/polkit (systemd's own `Restart=always` usually wins the race). On UP, every stream without a live publisher is republished. Publisher failures that happen while MediaMTX is unreachable are not counted as stream failures. Measured locally: MediaMTX back 2.7 s after the kill, all streams RUNNING at 2.9 s.
 
@@ -138,7 +170,7 @@ Other streams are never affected.
 * Both services run as dedicated non-root users under systemd hardening (`ProtectSystem=strict`, `NoNewPrivileges`, no capabilities). The backend may only start, restart or stop `mediamtx.service` (polkit rule).
 * MediaMTX exposes only RTSP :8554. The Control API and metrics bind to 127.0.0.1. RTMP, HLS, WebRTC, SRT, MoQ, pprof and playback are disabled, which a test asserts. Publishing is loopback-only.
 
-## 9. Database schema (SQLite, `PRAGMA user_version` = 4)
+## 9. Database schema (SQLite, `PRAGMA user_version` = 5)
 
 **videos**: `id`, `rel_path` UNIQUE, `size_bytes`, `mtime_ns`, `inode`, `device`, `quick_hash`, `status` (READY|INVALID|MISSING), `error`, `container`, `duration_s`, `width`, `height`, `fps`, `fps_text`, `is_vfr`, `video_codec`, `video_profile`, `pix_fmt`, `bit_depth`, `field_order`, `bitrate_bps`, `audio_codec`, `keyframe_interval_s`, `compat_mode` (copy|transcode|reject), `compat_reasons` JSON, `compat_warnings` JSON, `probe_json`, `thumbnail`, `created_at`, `updated_at`, `last_seen_at`.
 
@@ -151,6 +183,8 @@ Other streams are never affected.
 **v3:** **status_history** (`id`, `stream_id`, `ts`, `status`, `detail`): one row per status change, pruned after 7 days. It feeds the 24 h availability bar and `GET /api/streams/{id}/history`.
 
 **v4:** analytics for the dashboard's left taskbar. **analytics_categories** (`id`, `name` UNIQUE NOCASE, `sort`), **analytics** (`id`, `category_id` → categories (RESTRICT), `name` UNIQUE NOCASE, `description`, `sort`), **analytics_slots** (video placeholders: `id`, `analytics_id` → analytics (RESTRICT), `title`, `description`, `video_id` → videos (SET NULL), `sort`, `created_by`, `created_at`, `updated_at`) and `streams.slot_id` → analytics_slots (SET NULL). The migration seeds Traffic, People, Earth Science and Parking with their 17 analytics (`ANALYTICS_SEED` in `migrations.py`). Deletes are refused while something depends on the row, so a placeholder can't vanish under running cameras; deleting a video only empties its placeholders.
+
+**v5:** lead-in: `streams.lead_in_mode` (CHECK none|fixed|hold, default `none` for existing rows), `lead_in_s` (CHECK 0–120, default 5), `hold_max_s` (NULL = no timeout). New streams take `RTSPM_DEFAULT_LEAD_IN_MODE` (fixed).
 
 Users stay in the hashed users file (not SQLite): atomic writes, works with the CLI and is backed up nightly.
 

@@ -42,7 +42,8 @@ def stream_out(ctx: Context, row: Stream, proc_index: dict | None = None) -> Str
         version=row.version, created_at=row.created_at, created_by=row.created_by, updated_at=row.updated_at,
         updated_by=row.updated_by, last_start_at=row.last_start_at, last_stop_at=row.last_stop_at,
         running_since=row.running_since, owner=row.owner, note=row.note, protected=bool(row.protected),
-        group_id=row.group_id, slot_id=row.slot_id, warnings=(row.config_json or {}).get("compat_warnings", []),
+        group_id=row.group_id, slot_id=row.slot_id, lead_in_mode=row.lead_in_mode or "none",
+        lead_in_s=row.lead_in_s if row.lead_in_s is not None else 5.0, hold_max_s=row.hold_max_s, warnings=(row.config_json or {}).get("compat_warnings", []),
         runtime=ctx.supervisor.runtime_view(row, proc_index if proc_index is not None else _proc_index(ctx)),
     )
 
@@ -115,7 +116,9 @@ async def create_stream(body: StreamCreate, wait: bool = False, ctx: Context = D
             if s.get(AnalyticsSlot, body.slot_id) is None:
                 raise HTTPException(404, "Video placeholder not found.")
     row = await ctx.supervisor.create(body.name, _cfg(body), body.start_now, user.username,
-                                      note=body.note, protected=body.protected, slot_id=body.slot_id)
+                                      note=body.note, protected=body.protected, slot_id=body.slot_id,
+                                      lead_in_mode=body.lead_in_mode, lead_in_s=body.lead_in_s,
+                                      hold_max_s=body.hold_max_s)
     if wait and body.start_now:
         row = await ctx.supervisor.wait_until_settled(row.id, ctx.settings.startup_timeout_s + 5)
     return stream_out(ctx, row)
@@ -152,11 +155,21 @@ async def update_stream(stream_id: int, body: StreamUpdate, version: int | None 
         raise HTTPException(403, "Only the owner or an admin can protect or unprotect a stream.")
     touches_cfg = any(v is not None for v in (body.video_id, body.start, body.end, body.mode,
                                               body.force_transcode)) or body.clear_end
-    meta = {k: v for k, v in (("note", body.note), ("protected", body.protected), ("owner", body.owner))
-            if v is not None}
+    meta = {k: v for k, v in (("note", body.note), ("protected", body.protected), ("owner", body.owner),
+                              ("lead_in_mode", body.lead_in_mode), ("lead_in_s", body.lead_in_s),
+                              ("hold_max_s", body.hold_max_s)) if v is not None}
+    if body.clear_hold_max:
+        meta["hold_max_s"] = None
     row = await ctx.supervisor.update(stream_id, version, user.username, name=body.name,
                                       cfg=_cfg(body, row) if touches_cfg else None, meta=meta)
     return stream_out(ctx, row)
+
+
+@router.post("/{stream_id}/go", response_model=StreamOut)
+async def go_stream(stream_id: int, ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
+    """End the lead-in now: start the video (it still keeps the 2 s start spacing)."""
+    guard(ctx.supervisor.get_row(stream_id), user, "start")
+    return stream_out(ctx, await ctx.supervisor.go_now(stream_id, user.username))
 
 
 @router.post("/{stream_id}/start", response_model=StreamOut)
@@ -251,7 +264,8 @@ async def live_preview(stream_id: int, file: str, request: Request, ctx: Context
     if not _HLS_FILE.fullmatch(file):
         raise HTTPException(404, "Not found")
     row = ctx.supervisor.get_row(stream_id)
-    if row.status != StreamStatus.RUNNING:
+    # during a lead-in the preview shows the slate, as an edge would see it
+    if row.status not in (StreamStatus.RUNNING, StreamStatus.LEAD_IN, StreamStatus.WAITING_FOR_VIEWER):
         raise HTTPException(409, "The stream is not live.")
     url = f"{ctx.settings.mediamtx_hls_url.rstrip('/')}/{row.name}/{file}"
     if file.endswith(".m3u8"):  # count distinct dashboard viewers of this preview

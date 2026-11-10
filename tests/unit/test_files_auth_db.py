@@ -185,8 +185,8 @@ def test_user_store(tmp_path):
 # ---------------------------------------------------------------- database
 def test_migrations_match_orm_and_enforce_constraints(tmp_path):
     db = Database(tmp_path / "t.db")
-    assert db.migrate() == 4
-    assert db.migrate() == 4  # idempotent
+    assert db.migrate() == 5
+    assert db.migrate() == 5  # idempotent
     insp = inspect(db.engine)
     for table in Base.metadata.sorted_tables:
         cols = {c["name"] for c in insp.get_columns(table.name)}
@@ -220,11 +220,13 @@ def test_migration_upgrades_a_v1_database_in_place(tmp_path):
                 "'RUNNING','now','now','alice')")
     con.commit()
     con.close()
-    assert Database(path).migrate() == 4
+    assert Database(path).migrate() == 5
     con = sq.connect(path)
     assert con.execute("select name, owner, protected, group_id, slot_id from streams").fetchone() == \
         ("cam", "alice", 0, None, None)
     assert con.execute("select count(*) from analytics").fetchone() == (17,)
+    # v5: existing streams keep starting at once (no lead-in)
+    assert con.execute("select lead_in_mode, lead_in_s, hold_max_s from streams").fetchone() == ("none", 5.0, None)
 
 
 def test_login_throttle():

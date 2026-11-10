@@ -82,6 +82,9 @@ class RunIn(BaseModel):
     mode: Literal["loop", "once"] = "loop"
     force_transcode: bool = False
     start_now: bool = True
+    lead_in_mode: Literal["none", "fixed", "hold"] | None = None
+    lead_in_s: float | None = Field(default=None, ge=0, le=120)
+    hold_max_s: float | None = Field(default=None, gt=0, le=7 * 86400)
 
 
 def slugify(name: str) -> str:
@@ -102,7 +105,8 @@ def next_names(prefix: str, taken: set[str], count: int) -> list[str]:
 
 
 def _problem(st: Stream) -> bool:
-    return st.status == "ERROR" or (st.desired_state == "RUNNING" and st.status != "RUNNING")
+    return st.status == "ERROR" or (st.desired_state == "RUNNING"
+                                    and st.status not in ("RUNNING", "LEAD_IN", "WAITING_FOR_VIEWER"))
 
 
 def _viewers(ctx: Context, st: Stream) -> int:
@@ -252,7 +256,9 @@ async def run_slot(sid: int, body: RunIn, ctx: Context = Depends(get_ctx), user:
     created, errors = [], []
     for name in names:
         try:
-            row = await ctx.supervisor.create(name, cfg, body.start_now, user.username, slot_id=sid)
+            row = await ctx.supervisor.create(name, cfg, body.start_now, user.username, slot_id=sid,
+                                              lead_in_mode=body.lead_in_mode, lead_in_s=body.lead_in_s,
+                                              hold_max_s=body.hold_max_s)
             created.append(stream_out(ctx, row))
         except ServiceError as exc:
             errors.append({"name": name, "error": exc.message})

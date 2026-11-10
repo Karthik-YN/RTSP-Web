@@ -46,6 +46,14 @@ run_install() {
     echo "--- MediaMTX kill -> republish"
     systemctl kill --kill-whom=main -s SIGKILL mediamtx; sleep 10
     curl -fs $A $H/api/streams | python3 -c "import json,sys; s=json.load(sys.stdin)[0]; print(\"after mediamtx kill:\", s[\"status\"]); assert s[\"status\"]==\"RUNNING\""
+    echo "--- lead-in: MediaMTX (its own user) plays the slate from /var/lib/rtsp-manager/slates"
+    stat -c "%a %U" /var/lib/rtsp-manager /var/lib/rtsp-manager/slates
+    SID=$(curl -fs $A -H "Content-Type: application/json" -X POST "$H/api/streams?wait=true"       -d "{\"name\":\"lead_check\",\"video_id\":$VID,\"lead_in_mode\":\"hold\",\"lead_in_s\":2}" | python3 -c "import json,sys; s=json.load(sys.stdin); print(s[\"id\"]); assert s[\"status\"]==\"WAITING_FOR_VIEWER\", s[\"status\"]")
+    ls -l /var/lib/rtsp-manager/slates/
+    ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=codec_name,width,height -of csv=p=0 rtsp://127.0.0.1:8554/lead_check
+    sleep 5
+    curl -fs $A $H/api/streams/$SID | python3 -c "import json,sys; s=json.load(sys.stdin); print(\"after a viewer connected:\", s[\"status\"]); assert s[\"status\"] in (\"LEAD_IN\", \"RUNNING\")"
+    curl -fs $A -X DELETE $H/api/streams/$SID >/dev/null
     echo "--- polkit: backend may stop/start mediamtx"
     curl -fs $A -X POST $H/api/mediamtx/restart | python3 -c "import json,sys; print(json.load(sys.stdin)[\"message\"])"
     echo "--- nightly backup timer + manual backup"

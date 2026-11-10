@@ -1,7 +1,22 @@
 // Mirrors backend/app/schemas (see /docs on the server for the OpenAPI spec).
 
 export type StreamStatus =
-  | "STOPPED" | "STARTING" | "RUNNING" | "STOPPING" | "RESTARTING" | "ERROR" | "COMPLETED";
+  | "STOPPED" | "STARTING" | "RUNNING" | "STOPPING" | "RESTARTING" | "ERROR" | "COMPLETED"
+  | "LEAD_IN" | "WAITING_FOR_VIEWER";
+
+export type LeadInMode = "none" | "fixed" | "hold";
+
+export interface LeadInState {
+  mode: LeadInMode;
+  phase: "preparing" | "waiting" | "countdown";
+  lead_in_s: number | null;
+  hold_max_s: number | null;
+  video_in_s: number | null;
+  slate_at: string | null;
+  viewer_seen_at: string | null;
+  viewer: string | null;
+  slate_style: string | null;
+}
 
 export interface Reader {
   type: string | null;
@@ -44,6 +59,13 @@ export interface StreamRuntime {
   waiting_for_mediamtx: boolean;
   consecutive_failures: number;
   suppressed_timestamp_warnings: number;
+  /** Waiting in the start queue (2 s spacing between camera starts). */
+  start_queue: { position: number; eta_s: number | null } | null;
+  /** Set when the clip is too short to keep all cameras of this video apart. */
+  spacing_warning: string | null;
+  /** Set while the stream's slate is on its URL and the video has not started. */
+  lead_in?: LeadInState | null;
+  slate_on_url?: boolean;
 }
 
 export interface Stream {
@@ -62,6 +84,9 @@ export interface Stream {
   output_mode: "copy" | "transcode" | null;
   desired_state: "RUNNING" | "STOPPED";
   status: StreamStatus;
+  lead_in_mode: LeadInMode;
+  lead_in_s: number;
+  hold_max_s: number | null;
   status_detail: string | null;
   pid: number | null;
   last_error: string | null;
@@ -167,6 +192,7 @@ export interface SystemInfo {
     capacity_percent: number | null;
   };
   viewers: number | null;
+  start_queue?: { spacing_s: number; ready_wait_s: number; phase_margin_s: number; queued: number; launching: boolean };
   rtsp_ingest_bps?: number | null;
   rtsp_egress_bps?: number | null;
   warnings: string[];
@@ -204,6 +230,8 @@ export interface AppConfig {
   auth_enabled: boolean;
   ffmpeg_version: string | null;
   warnings: string[];
+  default_lead_in_mode?: LeadInMode;
+  default_lead_in_s?: number;
 }
 
 export interface User {

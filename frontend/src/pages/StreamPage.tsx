@@ -7,7 +7,8 @@ import { formatBitrate, formatBytes, formatTime, since } from "../lib/format";
 import type { StreamDetail } from "../types/api";
 import { Avatar, CopyButton, ErrorBox, Pill, Skeleton, Spinner, StatusBadge, useToast, WarnBox } from "../components/common";
 import { LivePlayer } from "../components/LivePlayer";
-import { canControl, useStreamActions } from "../components/StreamsTable";
+import { canControl, queueText, useStreamActions } from "../components/StreamsTable";
+import { describeLeadIn, GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import { ChevronLeftIcon, ImageIcon, LockIcon, PlayIcon, RestartIcon, StopIcon, TrashIcon } from "../components/icons";
 
 type Tab = "overview" | "logs" | "viewers" | "history";
@@ -34,7 +35,8 @@ export function StreamPage() {
   if (!s) return <div className="space-y-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-32" /><Skeleton className="h-64" /></div>;
 
   const can = canControl(s, rig.user);
-  const live = ["RUNNING", "STARTING", "RESTARTING"].includes(s.status);
+  const live = ["RUNNING", "STARTING", "RESTARTING", "LEAD_IN", "WAITING_FOR_VIEWER"].includes(s.status);
+  const reload = () => { refresh(); rig.refreshStreams(); };
   const tabs: [Tab, string][] = [["overview", "Overview"], ["logs", "Logs"], ["viewers", `Viewers (${s.runtime.viewer_count})`], ["history", "History"]];
 
   return (
@@ -70,7 +72,16 @@ export function StreamPage() {
           <span className="flex-1 break-all">{s.rtsp_url}</span><CopyButton text={s.rtsp_url} label="Copy URL" />
         </div>
         <div className="mt-3 space-y-2">
-          {s.status_detail && s.status !== "RUNNING" && <WarnBox>{s.status_detail}</WarnBox>}
+          {leadText(s) && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-sky-500/10 px-3 py-2 text-sm text-sky-800 dark:text-sky-300">
+              <span className="flex-1"><b>{leadText(s)}.</b> Viewers see the stream's slate ({s.runtime.lead_in?.slate_style ?? "name and clock"}) on this URL until the video starts.</span>
+              {can && <GoButton s={s} onDone={reload} small={false} />}
+            </div>
+          )}
+          {queueText(s)
+            ? <WarnBox>{queueText(s)}: camera starts are kept 2 s apart so the edge never gets the same frame from two cameras at once.</WarnBox>
+            : s.status_detail && s.status !== "RUNNING" && <WarnBox>{s.status_detail}</WarnBox>}
+          {s.runtime.spacing_warning && <WarnBox>{s.runtime.spacing_warning}</WarnBox>}
           {s.last_error && <ErrorBox><b>Last error:</b> {s.last_error}</ErrorBox>}
           {s.warnings.map((w, i) => <WarnBox key={i}>{w}</WarnBox>)}
           {s.protected && !can && rig.user.can_write && (
@@ -91,8 +102,9 @@ export function StreamPage() {
       {tab === "overview" && (
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
-            {s.status === "RUNNING" && (
-              <Panel title="Live preview" right={<span className="text-xs text-subtle">a few seconds behind the RTSP stream</span>}>
+            {(s.status === "RUNNING" || s.status === "LEAD_IN" || s.status === "WAITING_FOR_VIEWER") && (
+              <Panel title={s.status === "RUNNING" ? "Live preview" : "Live preview (lead-in slate)"}
+                right={<span className="text-xs text-subtle">a few seconds behind the RTSP stream</span>}>
                 <LivePlayer streamId={s.id} />
               </Panel>
             )}
@@ -114,6 +126,7 @@ export function StreamPage() {
               <KV k="Requested start / end" v={`${formatTime(s.start_offset_s)} / ${s.end_offset_s !== null ? formatTime(s.end_offset_s) : "end of file"}`} />
               <KV k="Effective (keyframes)" v={`${formatTime(s.effective_start_s)} → ${formatTime(s.effective_end_s)}`} />
               <KV k="Mode" v={`${s.playback_mode === "loop" ? "Loop" : "Play once"} · ${s.playback_speed}x · ${s.output_mode === "copy" ? "stream copy" : "H.264 transcode"}`} />
+              <KV k="Lead-in" v={describeLeadIn(s)} />
               <KV k="Last change" v={`${rig.user.auth_enabled ? `${s.updated_by ?? "?"} · ` : ""}${new Date(s.updated_at).toLocaleString()}`} />
             </Panel>
             <Panel title="FFmpeg command">
@@ -139,6 +152,7 @@ export function StreamPage() {
               </button>
             </Panel>
             <MetaPanel s={s} onSaved={refresh} />
+            {can && <LeadInPanel s={s} onSaved={refresh} />}
             {s.video && (
               <Panel title="Source video">
                 <KV k="File" v={`${s.video.rel_path} (${formatBytes(s.video.size_bytes)})`} />
@@ -266,6 +280,42 @@ function MetaPanel({ s, onSaved }: { s: StreamDetail; onSaved: () => void }) {
   );
 }
 
+function LeadInPanel({ s, onSaved }: { s: StreamDetail; onSaved: () => void }) {
+  const toast = useToast();
+  const initial: LeadInValue = { mode: s.lead_in_mode, seconds: s.lead_in_s, holdMax: s.hold_max_s };
+  const [value, setValue] = useState<LeadInValue>(initial);
+  const [saving, setSaving] = useState(false);
+  const [formKey, setFormKey] = useState(0);
+  const changed = value.mode !== s.lead_in_mode || value.seconds !== s.lead_in_s
+    || (value.mode === "hold" && value.holdMax !== s.hold_max_s);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const b = leadInBody(value);
+      await api.update(s.id, s.version, {
+        lead_in_mode: b.lead_in_mode, lead_in_s: b.lead_in_s,
+        ...(b.hold_max_s != null ? { hold_max_s: b.hold_max_s } : { clear_hold_max: true }),
+      });
+      toast("ok", "Lead-in saved. It applies the next time the stream starts or restarts.");
+      onSaved();
+    } catch (e) {
+      toast("bad", (e as ApiError).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Panel title="Lead-in">
+      <LeadInFields key={formKey} value={value} onChange={setValue} idPrefix={`lead-${s.id}`} />
+      <div className="mt-2 flex items-center gap-2">
+        <button className="btn-secondary btn-xs" disabled={!changed || saving} onClick={save}>Save lead-in</button>
+        {changed && <button className="btn-ghost btn-xs" onClick={() => { setValue(initial); setFormKey((k) => k + 1); }}>Undo</button>}
+        <span className="text-xs text-subtle">Applies at the next start or restart.</span>
+      </div>
+    </Panel>
+  );
+}
+
 function Panel({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
   return (
     <section className="card p-4">
@@ -288,6 +338,7 @@ function KV({ k, v }: { k: string; v: ReactNode }) {
 const SEG_COLOR: Record<string, string> = {
   RUNNING: "bg-emerald-500", STARTING: "bg-blue-400", RESTARTING: "bg-amber-500", STOPPING: "bg-slate-400",
   STOPPED: "bg-slate-300 dark:bg-slate-600", ERROR: "bg-red-500", COMPLETED: "bg-violet-500",
+  LEAD_IN: "bg-sky-400", WAITING_FOR_VIEWER: "bg-indigo-400",
 };
 
 /** Last 24 h of status changes as a colored bar (hover a segment for details). */

@@ -9,6 +9,8 @@ import {
   ConfirmDialog, CopyButton, copyText, ErrorBox, Modal, Pill, Skeleton, Spinner, StatusBadge, useToast, WarnBox,
 } from "../components/common";
 import { isVideoFile, useUploads } from "../components/UploadQueue";
+import { queueText } from "../components/StreamsTable";
+import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import {
   CameraIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, PlusIcon, SearchIcon, StopIcon,
   TrashIcon, UploadIcon,
@@ -384,6 +386,10 @@ function StreamRow({ s, canWrite, onChanged }: { s: Stream; canWrite: boolean; o
         </span>
       )}
       {s.status === "STOPPED" && s.last_stop_at && <span className="text-xs text-subtle">stopped {formatSince(s.last_stop_at)}</span>}
+      {leadText(s) && <span className="text-xs text-sky-700 dark:text-sky-300" title="The slate is on the URL; the video follows">{leadText(s)}</span>}
+      {leadText(s) && canWrite && <GoButton s={s} onDone={onChanged} />}
+      {queueText(s) && <span className="text-xs text-blue-700 dark:text-blue-300" title="Camera starts are kept 2 s apart">{queueText(s)}</span>}
+      {rt.spacing_warning && <span className="text-xs text-amber-700 dark:text-amber-300" title={rt.spacing_warning}>clip too short for 2 s spacing</span>}
       <div className="ml-auto flex items-center gap-1">
         <CopyButton text={s.rtsp_url} label="Copy URL" />
         {canWrite && (
@@ -493,8 +499,10 @@ function PickVideoDialog({ current, onClose, onPick, onUpload }: {
 function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
   slot: AnalyticsSlot; video: Video; analyticsName: string; onClose: () => void; onDone: () => void;
 }) {
-  const { streams, system } = useRig();
+  const { streams, system, config } = useRig();
   const [countText, setCountText] = useState("1");
+  const [lead, setLead] = useState<LeadInValue>({
+    mode: config?.default_lead_in_mode ?? "fixed", seconds: config?.default_lead_in_s ?? 5, holdMax: null });
   const count = Math.max(1, Math.min(20, Math.floor(Number(countText)) || 1));
   const countErr = /^\s*([1-9]|1\d|20)\s*$/.test(countText) ? null : "Enter 1 to 20";
   const [prefix, setPrefix] = useState(slugify(analyticsName));
@@ -522,7 +530,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
     setErr(null);
     try {
       const r = await api.runSlot(slot.id, { count, name_prefix: prefix, start: start.trim() || null, end: end.trim() || null,
-        mode, start_now: startNow });
+        mode, start_now: startNow, ...leadInBody(lead) });
       setResult(r);
       onDone();
     } catch (e) {
@@ -603,6 +611,10 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
           <label className="flex items-center gap-2"><input type="radio" checked={mode === "loop"} onChange={() => setMode("loop")} /> Loop forever</label>
           <label className="flex items-center gap-2"><input type="radio" checked={mode === "once"} onChange={() => setMode("once")} /> Play once</label>
           <label className="ml-auto flex items-center gap-2"><input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} /> Start now</label>
+        </div>
+        <div>
+          <span className="label">Lead-in (before the video)</span>
+          <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
         </div>
         <div>
           <div className="label">Streams to create</div>

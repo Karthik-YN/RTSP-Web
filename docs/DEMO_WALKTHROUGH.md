@@ -208,11 +208,13 @@ If you have the portal open, add it as a camera now (see `docs/EDGE_VALIDATION.m
 2. Click **Add video placeholder**. Give it a title ("Warehouse gate, day shift") and a description of the scene and what should be detected.
 3. Drag a video from your laptop onto the card (or **Upload from this device**). Point out the Uploads panel: the file goes to the server, not your laptop, and keeps going if you switch pages.
 4. Click **Run RTSP**, set **Number of cameras** to 3 and **Create 3 streams**. Show the names `ppe-1…3` and **Copy all URLs**.
-5. Show the streams on the card with their viewers, and the **PPE** label on the Streams page.
+5. Show the streams on the card with their viewers, and the **PPE** label on the Streams page. While they start, each card shows **Queued #2 · starts in ~3 s**: "cameras start 2 seconds apart, so the edge never gets the same frame from two cameras at once and throws it away."
 
 > "Each analytics has its own shelf of test videos with notes, and one click turns a video into as many cameras as the edge needs."
 
 Stop a stream on the card and start it again: "tomorrow it is still there, on the same URL."
+
+**Lead-in.** Run one more camera with **Lead-in: Until a viewer connects**. Its card says **Waiting for a viewer**, and the stream page preview shows its slate (black, its name and a clock). Connect VLC or `ffplay -rtsp_transport tcp <url>`: the card switches to **Viewer connected · video in 5 s**, then the video starts without the player reconnecting. "The edge never misses the start of the footage, even if someone adds the camera in the portal ten minutes later." **Start video now** skips the wait.
 
 ### 5. Everyone joins (3 min)
 

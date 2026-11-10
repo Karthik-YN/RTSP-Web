@@ -38,12 +38,13 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | GET/DELETE | `/api/videos/uploads/{id}` | Ask the current offset (after a dropped connection) / abort and release the space |
 | DELETE | `/api/videos/{id}` | **Admin**: move to `.trash` (purged after 7 days); 409 while any stream uses it |
 | GET | `/api/videos/{id}` · `/thumbnail` · `/frame?t=` | Metadata, thumbnail, frame at time *t* (JPEG) |
-| GET | `/api/streams` | All streams with live runtime (status, path ready, viewers with host names, `viewer_peak_today`, `preview_watchers`, loops, progress) |
+| GET | `/api/streams` | All streams with live runtime (status, path ready, viewers with host names, `viewer_peak_today`, `preview_watchers`, loops, progress, `start_queue` {position, eta_s} while queued for a start slot, `spacing_warning`, `lead_in` {mode, phase, video_in_s, viewer_seen_at, viewer} during a lead-in, `slate_on_url`); statuses include `LEAD_IN` and `WAITING_FOR_VIEWER` |
 | POST | `/api/streams/validate` | Dry run of a create: effective (keyframe) start/end, output mode, warnings |
-| POST | `/api/streams[?wait=true]` | Create (and start unless `start_now:false`); optional `slot_id` links it to an analytics video placeholder |
+| POST | `/api/streams[?wait=true]` | Create (and start unless `start_now:false`); optional `slot_id` links it to an analytics video placeholder; `lead_in_mode` (`none`/`fixed`/`hold`, default from `RTSPM_DEFAULT_LEAD_IN_MODE`), `lead_in_s` (0–120), `hold_max_s`. `?wait=true` waits through a fixed lead-in; a hold stream returns `WAITING_FOR_VIEWER` |
 | GET | `/api/streams/{id}` | Detail: command, PID, config, source metadata, last 20 log lines, events |
-| PATCH | `/api/streams/{id}` | Edit (`If-Match`). Config changes restart a running stream; `note`, `protected` (owner/admin) and `owner` (admin) do not. Renaming requires a stopped stream |
-| POST | `/api/streams/{id}/start|stop|restart[?wait=true]` | Lifecycle |
+| PATCH | `/api/streams/{id}` | Edit (`If-Match`). Config changes restart a running stream; `note`, `protected` (owner/admin), `owner` (admin) and the lead-in fields (`lead_in_mode`, `lead_in_s`, `hold_max_s`, `clear_hold_max`; applied at the next start) do not. Renaming requires a stopped stream |
+| POST | `/api/streams/{id}/start|stop|restart[?wait=true]` | Lifecycle (start and restart run the stream's lead-in) |
+| POST | `/api/streams/{id}/go` | "Start video now": end the lead-in (409 if the stream isn't in one) |
 | DELETE | `/api/streams/{id}` | Stop and remove the stream; **never deletes the source video** |
 | GET | `/api/streams/{id}/logs?lines=20` | Log tail (1–200 lines) |
 | GET | `/api/streams/{id}/snapshot` | One JPEG frame read back over RTSP (end-to-end check; counts as a reader briefly) |
@@ -66,7 +67,7 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | POST | `/api/analytics/{id}/start\|stop\|restart` | Act on every stream of the analytics |
 | GET | `/api/analytics/{id}/urls?format=txt\|csv` | All RTSP URLs of the analytics, for the portal |
 | GET | `/api/metrics` | Prometheus text format (streams by status, per-stream up/viewers/egress/restarts, MediaMTX up, CPU, RAM, disk) |
-| GET | `/api/system` | CPU, RAM, disks, network, FFmpeg processes, stream counts and capacity, viewers, warnings |
+| GET | `/api/system` | CPU, RAM, disks, network, FFmpeg processes, stream counts and capacity, viewers, warnings, `start_queue` (`spacing_s`, `ready_wait_s`, `phase_margin_s`, `queued`, `launching`) |
 | GET | `/api/system/recovery` | Last boot-recovery report (seconds after OS boot for every stream) |
 | GET | `/api/events?limit=&stream_id=&kind=` | Audit log (who did what, failures, recoveries) |
 | GET | `/api/mediamtx/status` | State, detection time, last error, recoveries, paths, readers |

@@ -82,6 +82,7 @@ class RecoveryService:
             "orphans_reaped": orphans,
             "publishers_adopted": len(adopted),
             "streams_to_recover": len(ids),
+            "start_spacing_s": sup.gate.spacing_s,
             "mediamtx_ready": mtx_ok,
             "mediamtx_ready_after_boot_s": round((mtx_ready - boot).total_seconds(), 1) if mtx_ok else None,
         })
@@ -109,7 +110,9 @@ class RecoveryService:
             if r.get("ready_at"):
                 ready = datetime.fromisoformat(r["ready_at"])
                 r["ready_after_boot_s"] = round((ready - boot).total_seconds(), 1)
-        ok = [r for r in results if r.get("result") == StreamStatus.RUNNING]
+        # A stream in its lead-in already serves its URL (the slate); the video follows.
+        on_air = (StreamStatus.RUNNING, StreamStatus.LEAD_IN, StreamStatus.WAITING_FOR_VIEWER)
+        ok = [r for r in results if r.get("result") in on_air]
         self.report.update({
             "state": "done",
             "streams_running": len(ok),

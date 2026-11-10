@@ -47,7 +47,10 @@ class StreamStatus:
     RESTARTING = "RESTARTING"
     ERROR = "ERROR"
     COMPLETED = "COMPLETED"
-    ALL = (STOPPED, STARTING, RUNNING, STOPPING, RESTARTING, ERROR, COMPLETED)
+    # Lead-in: the stream's slate is on its URL, the video comes after
+    LEAD_IN = "LEAD_IN"  # counting down to the video
+    WAITING_FOR_VIEWER = "WAITING_FOR_VIEWER"  # hold mode: slate until a reader connects
+    ALL = (STOPPED, STARTING, RUNNING, STOPPING, RESTARTING, ERROR, COMPLETED, LEAD_IN, WAITING_FOR_VIEWER)
 
 
 class DesiredState:
@@ -144,6 +147,9 @@ class Stream(Base):
     protected: Mapped[bool] = mapped_column(Integer, default=0)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("stream_groups.id", ondelete="SET NULL"))
     slot_id: Mapped[int | None] = mapped_column(ForeignKey("analytics_slots.id", ondelete="SET NULL"))
+    lead_in_mode: Mapped[str] = mapped_column(Text, default="none")
+    lead_in_s: Mapped[float] = mapped_column(Float, default=5.0)
+    hold_max_s: Mapped[float | None] = mapped_column(Float)
 
 
 class AnalyticsCategory(Base):

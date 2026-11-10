@@ -115,6 +115,12 @@ class StreamCreate(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     protected: bool = False
     slot_id: int | None = Field(default=None, description="Analytics video placeholder this stream runs")
+    lead_in_mode: Literal["none", "fixed", "hold"] | None = Field(
+        default=None, description="Slate before the video: none, fixed N s, or hold until a viewer + N s "
+                                  "(default: RTSPM_DEFAULT_LEAD_IN_MODE)")
+    lead_in_s: float | None = Field(default=None, ge=0, le=120)
+    hold_max_s: float | None = Field(default=None, gt=0, le=7 * 86400,
+                                     description="Hold mode: start the video anyway after this many seconds")
 
 
 class StreamUpdate(BaseModel):
@@ -128,6 +134,10 @@ class StreamUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     protected: bool | None = None
     owner: str | None = Field(default=None, max_length=64)
+    lead_in_mode: Literal["none", "fixed", "hold"] | None = None
+    lead_in_s: float | None = Field(default=None, ge=0, le=120)
+    hold_max_s: float | None = Field(default=None, gt=0, le=7 * 86400)
+    clear_hold_max: bool = False
 
 
 class StreamValidateOut(BaseModel):
@@ -177,6 +187,9 @@ class StreamOut(BaseModel):
     protected: bool = False
     group_id: int | None = None
     slot_id: int | None = None
+    lead_in_mode: str = "none"
+    lead_in_s: float = 5.0
+    hold_max_s: float | None = None
     warnings: list[str] = []
     runtime: dict[str, Any] = {}
 

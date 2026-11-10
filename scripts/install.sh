@@ -74,7 +74,8 @@ install_conf() {  # install_conf <src> <dst> <mode> <owner:group>
 log "installing packages (ffmpeg, python3-venv, curl)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-PKGS=(ffmpeg python3 python3-venv python3-pip curl ca-certificates tar rsync)
+# fonts-dejavu-core: the lead-in slate draws the stream name and a clock (FFmpeg drawtext + fontconfig)
+PKGS=(ffmpeg fonts-dejavu-core python3 python3-venv python3-pip curl ca-certificates tar rsync)
 [[ $WITH_NGINX -eq 1 ]] && PKGS+=(nginx)
 [[ -n "$TLS" ]] && PKGS+=(openssl)
 if [[ ! -f "$SRC/frontend/dist/index.html" ]]; then PKGS+=(nodejs npm); fi
@@ -92,7 +93,10 @@ id rtspmgr  >/dev/null 2>&1 || { useradd --system --home-dir "$DATA" --no-create
 
 # ---------------------------------------------------------------- directories
 install -d -m 0755 -o root -g root "$APP"
-install -d -m 0750 -o rtspmgr -g rtspmgr "$DATA"
+# 0751: other users (MediaMTX) may pass through but not list it; they can reach
+# only the lead-in slates below, which MediaMTX itself plays (files 0644).
+install -d -m 0751 -o rtspmgr -g rtspmgr "$DATA"
+install -d -m 0755 -o rtspmgr -g rtspmgr "$DATA/slates"
 # setgid + group-writable: team members in group "rtspmgr" can copy videos in
 install -d -m 2775 -o rtspmgr -g rtspmgr "$VIDEOS"
 install -d -m 0750 -o root -g rtspmgr "$ETC"

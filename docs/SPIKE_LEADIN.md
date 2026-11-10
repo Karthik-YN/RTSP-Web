@@ -54,9 +54,11 @@ Sources: 1080p25 H.264 with 2 s keyframes; 720p 29.97 fps with B-frames; 1080p25
 * **Phase 2 hook:** the 2 s start spacing gate applies to the moment each publisher starts, including hold-triggered starts.
 * **Fallback** (not needed on this evidence): a feeder that switches the publisher's input, or transcoding lead-in streams.
 
+**Built in Phase 3** as proposed, with the decisions taken: new streams default to fixed 5 s, the 80–160 ms switch pause is accepted, and crash retries skip the lead-in. See `docs/ARCHITECTURE.md` §5b.
+
 ## Edge check (for you, about 10 minutes, before Phase 3 is called done)
 
-1. Run `backend/.venv/bin/python scripts/spike_leadin.py` on the VM, or start a hold-mode stream once Phase 3 exists.
+1. Create a stream with **Lead-in: Until a viewer connects** (or run `backend/.venv/bin/python scripts/spike_leadin.py` on the VM).
 2. Add the stream's URL as a camera in the portal while the slate shows.
 3. Confirm: the edge shows the slate, then the video, **without** a reconnect in its logs, and the analytics sees the first seconds of the video.
 4. Kill the publisher once (`pkill -f "rtsp://127.0.0.1:8554/<name>"`) and confirm the edge stays connected and the video comes back.
