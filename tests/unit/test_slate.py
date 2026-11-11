@@ -89,3 +89,13 @@ def test_lead_in_api_fields(rig_factory):
 def test_production_default_is_a_five_second_lead_in():
     s = Settings(_env_file=None)
     assert (s.default_lead_in_mode, s.default_lead_in_s, s.start_spacing_s) == ("fixed", 5.0, 2.0)
+
+
+def test_boot_recovery_event_with_no_streams_reads_cleanly(rig_factory):
+    from helpers import wait_for
+    with rig_factory([]) as rig:
+        def done():
+            evs = [e for e in rig.client.get("/api/events").json() if e["kind"] == "recovery.done"]
+            return evs[0] if evs else None
+        ev = wait_for(done, 20, desc="recovery.done event")
+        assert ev["message"] == "no streams to restore", ev["message"]

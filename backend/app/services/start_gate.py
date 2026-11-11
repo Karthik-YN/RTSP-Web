@@ -44,6 +44,7 @@ class Ticket:
     stream_id: int
     user_initiated: bool
     enqueued_mono: float
+    order: float = 0.0  # queue order: when the start was requested (lead-ins end in any order)
     cancelled: bool = False
     phase_tries: int = 0
     launched: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
@@ -137,13 +138,21 @@ class StartGate:
         return self.spacing_s > 0
 
     # ------------------------------------------------------------ public
-    def submit(self, stream_id: int, user_initiated: bool = False) -> Ticket:
-        t = Ticket(stream_id=stream_id, user_initiated=user_initiated, enqueued_mono=self._clock())
+    def submit(self, stream_id: int, user_initiated: bool = False, order: float | None = None) -> Ticket:
+        """Queue a start. ``order`` (monotonic time the start was requested) keeps
+        cameras in the order they were asked for, e.g. when their lead-ins end
+        a few milliseconds apart in a different order; default: now (FIFO)."""
+        now = self._clock()
+        t = Ticket(stream_id=stream_id, user_initiated=user_initiated, enqueued_mono=now,
+                   order=now if order is None else order)
         if self._closed:
             t.cancelled = True
             t.resolve(False)
             return t
-        self.queue.append(t)
+        i = len(self.queue)
+        while i > 0 and self.queue[i - 1].order > t.order:
+            i -= 1
+        self.queue.insert(i, t)
         if self._wake is None:
             self._wake = asyncio.Event()
         if self._task is None or self._task.done():

@@ -78,9 +78,12 @@ export function queueText(s: Stream): string | null {
   return q.position === 1 ? `Next to start${eta}` : `Queued #${q.position}${eta}`;
 }
 
+/** Normal on the way up: queued or starting (a start that hangs turns RESTARTING), lead-in slate. */
+const ON_TRACK = new Set(["RUNNING", "STARTING", "LEAD_IN", "WAITING_FOR_VIEWER"]);
+
+/** Same rule as the backend's analytics counts (api/analytics.py `_problem`). */
 export const isProblem = (s: Stream) =>
-  s.status === "ERROR" || (s.desired_state === "RUNNING" && s.status !== "RUNNING" && !s.runtime?.start_queue
-    && !s.runtime?.lead_in && s.status !== "LEAD_IN" && s.status !== "WAITING_FOR_VIEWER");
+  s.status === "ERROR" || (s.desired_state === "RUNNING" && !ON_TRACK.has(s.status));
 
 const ACCENT: Record<string, string> = {
   RUNNING: "before:bg-emerald-500", STARTING: "before:bg-blue-500", RESTARTING: "before:bg-amber-500",

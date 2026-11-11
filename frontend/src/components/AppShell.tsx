@@ -6,6 +6,7 @@ import { formatBitrate, formatBytes, formatDuration } from "../lib/format";
 import { useTheme, type ThemePref } from "../lib/theme";
 import { Avatar, ErrorBox, Modal, Skeleton, Spinner, useToast, WarnBox } from "./common";
 import { CreateStreamDialog, type StreamTemplate } from "./CreateStreamDialog";
+import { isProblem } from "./StreamsTable";
 import {
   ActivityIcon, CameraIcon, ChevronIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
   PlusIcon, SearchIcon, SunIcon, UsersIcon,
@@ -57,7 +58,7 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
 // ------------------------------------------------------------------ sidebar
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, streams, videos, config } = useRig();
-  const problems = streams?.filter((s) => s.status === "ERROR" || (s.desired_state === "RUNNING" && s.status !== "RUNNING")).length ?? 0;
+  const problems = streams?.filter(isProblem).length ?? 0;
   const items: { to: string; label: string; icon: ReactNode; badge?: ReactNode }[] = [
     { to: "/streams", label: "Streams", icon: <GridIcon />,
       badge: problems ? <Badge tone="bad">{problems}</Badge> : streams ? <Badge>{streams.length}</Badge> : null },

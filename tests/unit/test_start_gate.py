@@ -119,6 +119,27 @@ def test_fifo_and_spacing_from_on_air():
         assert rec.on_air[i] - rec.on_air[i - 1] >= 0.2
 
 
+def test_queue_keeps_the_order_starts_were_requested_in():
+    """Cameras created together end their lead-ins ms apart in any order; they
+    still go live in the order they were asked for. No order = FIFO at the back."""
+    async def go():
+        rec = Recorder(startup=0.02)
+        gate = StartGate(0.05, 1.0, launch=rec)
+        base = time.monotonic() - 1.0
+        asked = {sid: base + sid * 0.001 for sid in (1, 2, 3)}  # created 1, 2, 3 (a second ago)
+        gate.submit(1, True, order=asked[1])  # launches at once
+        await asyncio.sleep(0.01)
+        t3 = gate.submit(3, True, order=asked[3])  # 3's lead-in ended first...
+        t2 = gate.submit(2, True, order=asked[2])  # ...then 2's
+        t9 = gate.submit(9)  # a crash retry, no order: at the back
+        assert [gate.position(t) for t in (t2, t3, t9)] == [1, 2, 3]
+        await asyncio.gather(t2.launched, t3.launched, t9.launched)
+        await gate.close()
+        return rec
+
+    assert [sid for sid, _ in run(go()).launched] == [1, 2, 3, 9]
+
+
 def test_stuck_start_does_not_block_queue():
     async def go():
         rec = Recorder(never_ready={0})

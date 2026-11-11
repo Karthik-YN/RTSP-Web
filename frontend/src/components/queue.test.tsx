@@ -11,7 +11,11 @@ test("queued streams show their place and are not problems", () => {
   expect(queueText(next)).toBe("Next to start · starts in ~1 s");
 });
 
-test("a stream stuck starting outside the queue is still a problem", () => {
+test("starting is on track; a start that timed out or crashed (RESTARTING) is a problem", () => {
   expect(queueText(base)).toBeNull();
-  expect(isProblem(base)).toBe(true);
+  expect(isProblem(base)).toBe(false); // bounded by startup_timeout_s, then RESTARTING
+  expect(isProblem({ ...base, status: "RESTARTING" } as Stream)).toBe(true);
+  expect(isProblem({ ...base, status: "STOPPED" } as Stream)).toBe(true); // should run but does not
+  expect(isProblem({ ...base, status: "ERROR", desired_state: "STOPPED" } as Stream)).toBe(true);
+  expect(isProblem({ ...base, status: "STOPPED", desired_state: "STOPPED" } as Stream)).toBe(false);
 });

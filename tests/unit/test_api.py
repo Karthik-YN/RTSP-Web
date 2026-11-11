@@ -279,3 +279,16 @@ def test_system_endpoint(rig):
     assert j["streams"]["max_active"] == rig.settings.max_active_streams
     cfg = rig.client.get("/api/config").json()
     assert cfg["rtsp_url_template"] == f"rtsp://rig.test:{rig.ports['rtsp']}/{{name}}"
+
+
+def test_mediamtx_not_up_at_backend_start_is_not_an_outage_until_the_grace_ends(rig_factory, monkeypatch):
+    """At every backend start MediaMTX is briefly not up yet: no mediamtx.down event
+    (it is an alert). Still down after the grace period -> reported as before."""
+    import app.services.mediamtx_service as ms
+    monkeypatch.setattr(ms, "BOOT_GRACE_S", 4.0)
+    with rig_factory([], mediamtx=False) as rig:  # MediaMTX never comes up
+        def kinds():
+            return [e["kind"] for e in rig.client.get("/api/events").json()]
+        wait_for(lambda: rig.client.get("/api/mediamtx/status").json()["state"] == "DOWN", 10, desc="DOWN")
+        assert "mediamtx.down" not in kinds()  # within the grace: no event / alert
+        wait_for(lambda: "mediamtx.down" in kinds(), 10, desc="mediamtx.down after the grace")

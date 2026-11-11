@@ -31,6 +31,7 @@ from ..config import Settings
 log = logging.getLogger(__name__)
 
 UP, DOWN, UNKNOWN = "UP", "DOWN", "UNKNOWN"
+BOOT_GRACE_S = 20.0  # MediaMTX may take this long to come up at backend start before it is an outage
 PREVIEW_ACTIVE_S = 20.0  # a dashboard preview polls its playlist every few seconds
 
 
@@ -228,6 +229,9 @@ class MediaMTXService:
         self._preview_seen: dict[str, dict[str, float]] = {}  # path -> {client: last seen (monotonic)}
         self._peaks: dict[str, tuple[date, int]] = {}  # path -> (day, max RTSP viewers that day)
         self.slate_paths: dict[str, str] = {}  # path name -> slate file MediaMTX loops on it
+        self._boot_down_pending = False  # down since backend start, outage not reported yet
+        self._sess_cache: tuple[float, dict[str, list[dict]]] = (0.0, {})
+        self._sess_lock = asyncio.Lock()
 
     # ------------------------------------------------------------ lead-in slates
     @staticmethod
@@ -337,7 +341,9 @@ class MediaMTXService:
                 await self._mark_down()
             if self.state == DOWN:
                 await self._maybe_recover()
+                await self._boot_grace_over()
             return
+        self._boot_down_pending = False
         now_m = time.monotonic()
         for name, pinfo in paths.items():
             prev = self._prev_bytes.get(name)
@@ -385,9 +391,23 @@ class MediaMTXService:
         self.down_since = self.last_ok_at or now
         self.down_detected_at = now
         self.last_detection_s = (now - self.down_since).total_seconds()
+        if self.last_ok_at is None:
+            # Backend start: MediaMTX is simply not up yet (in process mode recovery is what
+            # starts it). No outage event/alert unless it is still down after the grace period.
+            self._boot_down_pending = True
+            log.info("MediaMTX not up yet (%s); starting it", self.last_error)
+            return
         log.error("MediaMTX DOWN (detected after %.1fs): %s", self.last_detection_s, self.last_error)
         for cb in self.on_down:
             await _safe(cb)
+
+    async def _boot_grace_over(self) -> None:
+        if self._boot_down_pending and self._first_fail_mono is not None \
+                and time.monotonic() - self._first_fail_mono >= BOOT_GRACE_S:
+            self._boot_down_pending = False
+            log.error("MediaMTX DOWN: not up %.0fs after backend start: %s", BOOT_GRACE_S, self.last_error)
+            for cb in self.on_down:
+                await _safe(cb)
 
     async def _maybe_recover(self) -> None:
         if not self.s.mediamtx_auto_recover or self.controller.mode == "external":
@@ -437,6 +457,30 @@ class MediaMTXService:
     # ------------------------------------------------------------ queries
     def path(self, name: str) -> PathInfo | None:
         return self.paths.get(name)
+
+    async def rtsp_readers(self, max_age_s: float = 0.2) -> dict[str, list[dict]]:
+        """Path -> RTSP(S) sessions reading it, fresh from MediaMTX (shared by callers
+        for ``max_age_s``). Used while a stream holds for its first viewer: the 2 s
+        path poll can miss a reader that only probes the URL for a moment."""
+        async with self._sess_lock:
+            at, cached = self._sess_cache
+            if time.monotonic() - at <= max_age_s:
+                return cached
+            out: dict[str, list[dict]] = {}
+            for kind in ("rtspsessions", "rtspssessions"):  # RTSPS when TLS is on
+                with contextlib.suppress(Exception):
+                    r = await self.client.get(f"/v3/{kind}/list", params={"itemsPerPage": 10000})
+                    if r.status_code != 200:
+                        continue
+                    for x in r.json().get("items", []):
+                        if x.get("state") == "read" and x.get("path"):
+                            out.setdefault(x["path"], []).append({
+                                "type": "rtspsSession" if kind == "rtspssessions" else "rtspSession",
+                                "id": x.get("id"), "remote_addr": x.get("remoteAddr"),
+                                "hostname": self.hostnames.get(addr_ip(x.get("remoteAddr"))),
+                            })
+            self._sess_cache = (time.monotonic(), out)
+            return out
 
     def peak_today(self, name: str) -> int:
         day, peak = self._peaks.get(name, (None, 0))

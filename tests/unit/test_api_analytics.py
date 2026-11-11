@@ -152,3 +152,16 @@ def test_stream_create_accepts_a_placeholder(rig):
     s = c.post("/api/streams", json={**body, "slot_id": slot["id"]}).json()
     assert s["slot_id"] == slot["id"]
     assert _analytics(rig, "LineCount")["streams"] == 1
+
+
+def test_problem_rule_matches_the_ui():
+    """Queued / starting / lead-in are normal; failed or not running when it should be is a problem."""
+    from types import SimpleNamespace as S
+
+    from app.api.analytics import _problem
+    want_running = {st: _problem(S(status=st, desired_state="RUNNING"))
+                    for st in ("RUNNING", "STARTING", "LEAD_IN", "WAITING_FOR_VIEWER", "RESTARTING", "STOPPED", "ERROR")}
+    assert want_running == {"RUNNING": False, "STARTING": False, "LEAD_IN": False, "WAITING_FOR_VIEWER": False,
+                            "RESTARTING": True, "STOPPED": True, "ERROR": True}
+    assert _problem(S(status="ERROR", desired_state="STOPPED"))
+    assert not _problem(S(status="STOPPED", desired_state="STOPPED"))

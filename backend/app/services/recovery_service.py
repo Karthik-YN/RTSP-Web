@@ -121,8 +121,9 @@ class RecoveryService:
             "all_ready_after_boot_s": max((r.get("ready_after_boot_s") or 0) for r in ok) if ok else None,
             "finished_at": utcnow().isoformat(),
         })
-        sup.events.add("recovery.done",
-                       f"{len(ok)}/{len(ids)} streams running; last ready "
-                       f"{self.report['all_ready_after_boot_s']}s after OS boot",
+        last = self.report["all_ready_after_boot_s"]
+        msg = (f"{len(ok)}/{len(ids)} streams running; last ready {last}s after OS boot" if last is not None
+               else f"{len(ok)}/{len(ids)} streams running" if ids else "no streams to restore")
+        sup.events.add("recovery.done", msg,
                        data={k: v for k, v in self.report.items() if k != "results"})
         return self.report

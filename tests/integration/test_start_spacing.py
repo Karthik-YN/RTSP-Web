@@ -195,7 +195,9 @@ def test_publishers_drop_and_duplicate_no_frames(rig_factory, mode):
             prog = rig.stream(i)["runtime"]["progress"]
             print(f"\n{mode}: frame {prog['frame']} drop {prog['drop_frames']} dup {prog['dup_frames']} "
                   f"loops {rig.stream(i)['runtime']['loop_count']}")
-            assert prog["frame"] > 250
+            assert prog["out_time_s"] >= 10, prog
+            # FFmpeg 6.1 (Ubuntu 24.04) reports frame=0 for stream copy; 5.1 and 7+ count them
+            assert prog["frame"] > 250 or (mode == "copy" and prog["frame"] == 0), prog
             assert rig.stream(i)["runtime"]["loop_count"] >= 2
             assert prog["drop_frames"] == 0 and prog["dup_frames"] <= allowed_dup, (mode, prog)
 

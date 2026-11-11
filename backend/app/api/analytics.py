@@ -104,9 +104,13 @@ def next_names(prefix: str, taken: set[str], count: int) -> list[str]:
     return out
 
 
+# Normal on the way up: queued for a start slot, publisher starting (bounded by
+# startup_timeout_s, then RESTARTING), lead-in slate on the URL.
+ON_TRACK = ("RUNNING", "STARTING", "LEAD_IN", "WAITING_FOR_VIEWER")
+
+
 def _problem(st: Stream) -> bool:
-    return st.status == "ERROR" or (st.desired_state == "RUNNING"
-                                    and st.status not in ("RUNNING", "LEAD_IN", "WAITING_FOR_VIEWER"))
+    return st.status == "ERROR" or (st.desired_state == "RUNNING" and st.status not in ON_TRACK)
 
 
 def _viewers(ctx: Context, st: Stream) -> int:

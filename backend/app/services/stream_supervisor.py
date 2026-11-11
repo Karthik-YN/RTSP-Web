@@ -92,6 +92,7 @@ class Runtime:
     lead: dict | None = None  # what the lead-in is doing, for the UI
     go_event: asyncio.Event | None = None  # "Start video now"
     slate_up: asyncio.Event | None = None  # set once the slate is on the URL
+    begun_mono: float | None = None  # when the user (or recovery) asked for the start: queue order
 
 
 class StreamSupervisor:
@@ -575,6 +576,7 @@ class StreamSupervisor:
         row = self.get_row(rt.stream_id)
         mode = row.lead_in_mode or "none"
         self._cancel_lead(rt)
+        rt.begun_mono = time.monotonic()
         if mode == "none":
             await self._clear_slate(row.name)
             await self._spawn(rt, user_initiated=True)
@@ -625,8 +627,11 @@ class StreamSupervisor:
                         reason = "started by user"
                         break
                     p = self.mtx.path(row.name)
-                    if p is not None and p.readers:
-                        rd = p.readers[0]
+                    found = list(p.readers) if p is not None else []
+                    if not found:  # fresh check: a reader that only probes leaves within the 2 s poll
+                        found = (await self.mtx.rtsp_readers()).get(row.name, [])
+                    if found:
+                        rd = found[0]
                         who = rd.get("hostname") or rd.get("remote_addr") or rd.get("type")
                         rt.lead.update(viewer_seen_at=utcnow().isoformat(), viewer=who)
                         rt.sink.write(f"lead-in: viewer connected ({who}); video in {lead_s:g}s", "rtspm")
@@ -638,7 +643,8 @@ class StreamSupervisor:
                         lead_s = 0.0
                         break
                     with contextlib.suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(go.wait(), 0.5)
+                        await asyncio.wait_for(go.wait(), 0.25)
+                rt.begun_mono = time.monotonic()  # queue place: when the hold ended, not when it began
             if lead_s > 0 and not go.is_set():
                 rt.lead.update(phase="countdown", video_at_mono=time.monotonic() + lead_s)
                 detail = "Viewer connected; video" if rt.lead.get("viewer_seen_at") else "Lead-in: video"
@@ -738,7 +744,10 @@ class StreamSupervisor:
             return
         if rt.ticket is not None:
             self.gate.cancel(rt.ticket)
-        rt.ticket = self.gate.submit(rt.stream_id, user_initiated)
+        # a user start keeps its place from when it was asked for (its lead-in may end a
+        # few ms after a later camera's); crash retries queue at the back
+        rt.ticket = self.gate.submit(rt.stream_id, user_initiated,
+                                     order=rt.begun_mono if user_initiated else None)
         self._update(rt.stream_id, status=StreamStatus.STARTING, pid=None,
                      status_detail=f"Queued for a start slot ({self.gate.spacing_s:g} s spacing)")
 

@@ -8,6 +8,7 @@ receives, in the order it receives it.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import signal
 import subprocess
@@ -140,10 +141,39 @@ def test_hold_waits_for_a_viewer_then_lead_in(rig_factory, tmp_path):
         assert rc == 0, err
         assert video_after >= 3.0
         assert [x["kind"] for x in segs] == ["S", "V"], describe(segs)
-        assert segs[0]["pts1"] - segs[0]["pts0"] >= 2.5  # >= lead_in_s of slate after joining (minus join time)
+        # lead_in_s of slate after joining, minus the wait for the reader's first picture
+        # (up to one slate keyframe interval, 1 s): the viewer is seen within ~0.3 s of connecting
+        assert segs[0]["pts1"] - segs[0]["pts0"] >= 3 - 1.0 - 0.1
         check_video_run(segs[1], START_FRAME)
         kinds = [e["kind"] for e in rig.client.get(f"/api/events?stream_id={sid}").json()]
         assert "stream.viewer_connected" in kinds
+
+
+def test_hold_sees_a_brief_reader(rig_factory):
+    """A reader that only probes (connects for well under the 2 s poll) still counts:
+    an edge may probe the camera first and connect for real a moment later."""
+    with rig_factory([VIDEO], start_spacing_s=0) as rig:
+        mtx = rig.ctx.mediamtx
+        polled = mtx.path
+
+        def no_polled_readers(name):  # the 2 s path poll "missed" the probe: only the fresh check can see it
+            p = polled(name)
+            return dataclasses.replace(p, readers=[]) if p is not None and name == "probe-hold" else p
+
+        mtx.path = no_polled_readers
+        sid = rig.create("probe-hold", VIDEO, lead_in_mode="hold", lead_in_s=2)["id"]
+        rig.wait_status(sid, "WAITING_FOR_VIEWER", 30)
+        t0 = time.monotonic()
+        r = subprocess.run(["ffprobe", "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
+                            "-show_entries", "stream=codec_name", "-of", "csv=p=0", rig.url("probe-hold")],
+                           capture_output=True, text=True, timeout=30)
+        probe_s = time.monotonic() - t0
+        assert r.returncode == 0 and r.stdout.strip() == "h264", r.stderr
+        st = rig.wait_status(sid, ("LEAD_IN", "RUNNING"), 5)
+        print(f"\nbrief reader: ffprobe connected for {probe_s:.2f}s; stream {st['status']}")
+        rig.wait_status(sid, "RUNNING", 15)
+        kinds = [e["kind"] for e in rig.client.get(f"/api/events?stream_id={sid}").json()]
+        assert "stream.viewer_connected" in kinds  # not the hold timeout or "start now"
 
 
 def test_start_video_now_and_hold_timeout(rig_factory):
