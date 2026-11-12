@@ -47,6 +47,7 @@ STORAGE = ROOT / "storage"
 DATA = STORAGE / "data"
 LOG_FILE = STORAGE / "logs" / "app.log"
 PID_FILE = DATA / "app.pid"
+HOST_FILE = DATA / "launcher-host"  # the last --host, so restarts keep the same RTSP URLs
 FIRST_LOGIN_FILE = DATA / "first-admin-login.txt"
 DIST = ROOT / "frontend" / "dist"
 
@@ -78,6 +79,32 @@ def load_env_file(path: Path) -> dict[str, str]:
         key, _, value = line.partition("=")
         values[key.strip()] = value.strip().strip("'\"")
     return values
+
+
+def public_host(args: argparse.Namespace, env_file: Path | None = None, host_file: Path | None = None) -> str:
+    """The address shown in RTSP URLs: --host, else .env, else the last --host, else this machine's address.
+
+    A --host is remembered, because on a machine with several networks the
+    automatic choice follows the default route and can flip between restarts,
+    which would change every URL the edge has saved.
+    """
+    env_file = env_file or ROOT / ".env"
+    host_file = host_file or HOST_FILE
+    if args.host:
+        try:
+            host_file.parent.mkdir(parents=True, exist_ok=True)
+            host_file.write_text(args.host.strip() + "\n")
+        except OSError:
+            pass
+        return args.host.strip()
+    configured = load_env_file(env_file).get("RTSPM_PUBLIC_RTSP_HOST")
+    if configured:
+        return configured
+    try:
+        saved = host_file.read_text().strip()
+    except OSError:
+        saved = ""
+    return saved or lan_ip()
 
 
 def lan_ip() -> str:
@@ -266,7 +293,7 @@ def backend_env(args: argparse.Namespace, mediamtx: str) -> dict[str, str]:
         "RTSPM_LOG_DIR": str(STORAGE / "logs"),
         "RTSPM_THUMBNAIL_DIR": str(STORAGE / "thumbnails"),
         "RTSPM_FRONTEND_DIST": str(DIST),
-        "RTSPM_PUBLIC_RTSP_HOST": lan_ip(),
+        "RTSPM_PUBLIC_RTSP_HOST": public_host(args),
         "RTSPM_MEDIAMTX_BIN": mediamtx,
         "RTSPM_MEDIAMTX_CONFIG": str(ROOT / "deployment" / "mediamtx.yml"),
         "RTSPM_AUTH_ENABLED": "false",
@@ -275,7 +302,7 @@ def backend_env(args: argparse.Namespace, mediamtx: str) -> dict[str, str]:
     for key, value in defaults.items():
         env.setdefault(key, value)
     if args.host:
-        env["RTSPM_PUBLIC_RTSP_HOST"] = args.host
+        env["RTSPM_PUBLIC_RTSP_HOST"] = public_host(args)
     # Use a MediaMTX that is already running here (e.g. the systemd service), else run our own.
     env.setdefault("RTSPM_MEDIAMTX_CONTROL", "external" if http_ok(MEDIAMTX_API) is not None else "process")
     return env
@@ -305,7 +332,7 @@ def tail_log(n: int = 25) -> str:
 
 def cmd_start(args: argparse.Namespace) -> int:
     check_python()
-    host = args.host or load_env_file(ROOT / ".env").get("RTSPM_PUBLIC_RTSP_HOST") or lan_ip()
+    host = public_host(args)
     if app_health(args.port):
         say("RIG-02 is already running.")
         show_url(dashboard_url(args.port, host), args.no_browser)
@@ -358,7 +385,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if not health:
         say("RIG-02 is not running. Start it with:  python3 app.py")
         return 1
-    host = args.host or load_env_file(ROOT / ".env").get("RTSPM_PUBLIC_RTSP_HOST") or lan_ip()
+    host = public_host(args)
     say(f"RIG-02 is running: {dashboard_url(args.port, host)}")
     say(f"  status {health.get('status')}, MediaMTX {health.get('mediamtx')}, version {health.get('version')}")
     return 0

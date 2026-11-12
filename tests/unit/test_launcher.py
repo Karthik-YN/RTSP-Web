@@ -58,3 +58,15 @@ def test_recognises_our_app_but_not_another_program():
     finally:
         srv.shutdown()
     assert launcher.app_health(free_port()) is None
+
+
+def test_host_is_remembered_across_restarts(tmp_path: Path, monkeypatch):
+    """A machine on two networks must not flip its RTSP host on 'restart' (no --host given)."""
+    import argparse
+    monkeypatch.setattr(launcher, "lan_ip", lambda: "192.168.68.105")
+    env, saved = tmp_path / ".env", tmp_path / "launcher-host"
+    assert launcher.public_host(argparse.Namespace(host=None), env, saved) == "192.168.68.105"
+    assert launcher.public_host(argparse.Namespace(host="192.168.29.108"), env, saved) == "192.168.29.108"
+    assert launcher.public_host(argparse.Namespace(host=None), env, saved) == "192.168.29.108"
+    env.write_text("RTSPM_PUBLIC_RTSP_HOST=rig02.lan\n")  # .env wins over the remembered one
+    assert launcher.public_host(argparse.Namespace(host=None), env, saved) == "rig02.lan"

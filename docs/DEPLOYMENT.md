@@ -50,6 +50,33 @@ The dashboard works from any address that reaches port 8080, because the UI talk
 
 The backend checks every 60 s (`RTSPM_ADDRESS_CHECK_INTERVAL_S`) whether its own IPs, or what `RTSPM_PUBLIC_RTSP_HOST` resolves to, changed. A change is logged as `network.address_changed` (and sent to the alert webhook). If `RTSPM_PUBLIC_RTSP_HOST` is a raw IP that is no longer on the server, the dashboard shows a warning that the edge's URLs no longer connect.
 
+#### Office with chained routers (several Wi-Fi networks behind each other)
+
+Measured in the office on 2026-11-12 (`traceroute` from a laptop on the mesh Wi-Fi):
+
+```
+Internet ← 192.168.1.1 (ISP router) ← 192.168.29.1 (router) ← 192.168.68.1 (mesh Wi-Fi)
+```
+
+Each router does NAT, so connections only work **upwards**. A device reaches its own network and every network *above* it, never one *below* it:
+
+| Server on | Reachable from 68 Wi-Fi | from 29 | from 1 |
+|---|---|---|---|
+| 192.168.68.x | yes | **no** | **no** |
+| 192.168.29.x (the VM: 192.168.29.105) | yes | yes | **no** (unless port forwarding, below) |
+| 192.168.1.x | yes | yes | yes |
+
+No app setting can change this. So:
+
+* Use the server's address on the **highest** network it is on as `RTSPM_PUBLIC_RTSP_HOST`. For the VM on 29 that is `192.168.29.105`, which works from the 68 and 29 Wi-Fis.
+* For the **1 network** as well, choose one:
+  * Put the VM's NIC (the Proxmox bridge) on the 1 network, with a DHCP reservation from 192.168.1.1; then every Wi-Fi reaches it.
+  * Or, on the 192.168.29.1 router, forward TCP 8080 and 8554 to the VM. Users on 1 then use that router's WAN address (its 192.168.1.x IP); list it in `RTSPM_RTSP_ALT_HOSTS`.
+  * Or flatten the network: set the mesh (and the 29 router) to access point or bridge mode, so all Wi-Fis are one network.
+* A guest Wi-Fi with "client isolation" blocks devices from each other entirely; don't use it for the edge or for viewers.
+
+To check from a Windows PC: `ipconfig | findstr IPv4`, then `Test-NetConnection <server> -Port 8554` (and `-Port 8080`). `TcpTestSucceeded : True` means VLC and the dashboard will work.
+
 What to ask IT for:
 
 1. A DHCP reservation (or a static IP) for the VM NIC's MAC address.
