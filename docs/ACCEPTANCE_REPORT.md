@@ -6,6 +6,8 @@
 
 ## 1. Test execution summary
 
+> **Latest runs (2026-11-12, development Mac), before the final fixes of that day:** backend suite 272 passed + 2 failed (two migration tests still expected schema v5; fixed, that file re-run: 26 passed); Debian 12 container: same 272 + 2; Ubuntu 24.04: not reached (the script stops at the first failure); `install` (systemd, Debian 12): **PASS**; `docker` (production image, linux/arm64): **PASS**; frontend 39 passed; capacity ramp to 100 streams: **PASS** (§2a). Fixed afterwards and **not re-run**: health test port inside Docker, STARTING streams in the health test, the Docker interface-address switch, gzip, Cloudflare session-expiry reload, test tooling without host FFmpeg. From now on all execution happens on the Proxmox VM: **re-run `scripts/test_linux.sh all` there** (docs/PROXMOX_RUNBOOK.md §3) and record the result here.
+
 | Suite | Command | Result |
 |---|---|---|
 | Backend unit + API + integration | `backend/.venv/bin/pytest -v` | **184 passed** in one run on macOS (FFmpeg 9); Linux matrix below |
@@ -59,6 +61,36 @@
 | 16 streams back within 2 min of boot | Backend restart with 4 streams: 1.4 s (dev) · 16-stream start time: §4 · **real reboot + edge NOT RUN** |
 | Publish a camera in under one minute | Workflow is 4 actions (Stream… → start time → Create & start → Copy URL); the stream is RUNNING < 1 s after Create. The portal part must be timed with a tester (E-01) |
 | 16 streams stable for a working day | **NOT RUN** (EDGE_VALIDATION "working-day stability") |
+| RTSP URLs usable from other subnets / VPN (Phase 8) | PASS (dev): address picker and `?host=` export checked in the browser via the Mac's LAN IP; foreign host refused (400) · **office subnets, VPN and company DNS name NOT RUN** |
+
+## 2a. Seniors' feature list (November 2026)
+
+| Feature | Status | Evidence |
+|---|---|---|
+| Analytics taskbar (17 analytics, 4 categories, video placeholders, run N cameras) | PASS (dev) | test_api_analytics.py, analytics.test.tsx, browser walkthrough 2026-11-11 |
+| Start-of-stream slate (fixed N s, or hold until the first viewer) | PASS (dev, Debian container, Docker image) · **5.x edge NOT RUN** | test_lead_in.py, SPIKE_LEADIN.md, `test_linux.sh install` / `docker` |
+| 2 s spacing between camera starts (every start incl. recovery) | PASS (dev) | test_start_gate.py, test_start_spacing.py; walkthrough: cameras live 2.3 s apart in creation order |
+| Upload from any device (resumable) | PASS (dev, browser + API) · **phone on the office Wi-Fi NOT RUN** | test_api.py upload tests; through Cloudflare: 8 MB chunks < 100 MB limit (not run on a real tunnel) |
+| Stop, restart next day on the same URL, delete | PASS (dev) | test_full_lifecycle; recovery tests |
+| Viewer counts | PASS (dev) | viewer tests; Health/Streams pages |
+| Health test page (+ automatic 10-min check, alerts, report download) | PASS (dev, Docker image) | test_health_test.py, health.test.tsx, browser 2026-11-12 (held stream skipped, not woken) |
+| Capacity: runtime limit + ramp load test up to 100 streams | Mac: **PASS at 100 streams × 1 reader** · **Proxmox VM NOT RUN** | `docs/reports/loadtest-ramp-mac-20261112.json` (below) |
+| Docker image (portable to any server) | PASS (Docker Desktop, linux/arm64) · **amd64 server NOT RUN** | `scripts/test_linux.sh docker` |
+| Access from anywhere (Cloudflare Tunnel + Access, fail closed) | Server side PASS (dev) · **real tunnel, Access login and WARP RTSP NOT RUN** (needs the company Cloudflare account) | test_cf_access.py |
+| RTSP URLs for other subnets / VPN | PASS (dev) · office subnets/VPN NOT RUN | test_network_info.py, browser check via LAN IP |
+| NAS as the video store | **Dropped** (2026-11-12): the Proxmox VM is both server and storage | — |
+
+**Capacity ramp on the development Mac** (Apple M-series, 8 cores, 8 GB; one 3 Mbit/s H.264 clip, copy mode, 1 RTSP reader per stream on the same machine, 1 min per level):
+
+| Streams | Readers | Start-up of the new streams | CPU avg / max | Memory max | Out (Mbit/s) | FFmpeg RSS | Slowest publisher | Drops / restarts / dead readers |
+|---|---|---|---|---|---|---|---|---|
+| 10 | 10 | 23 s | 47 / 54 % | 81 % | 65 | 0.27 GB | 1.01x | 0 / 0 / 0 |
+| 25 | 25 | 36 s | 44 / 53 % | 83 % | 159 | 0.60 GB | 1.00x | 0 / 0 / 0 |
+| 50 | 50 | 115 s | 36 / 45 % | 85 % | 309 | 1.17 GB | 1.00x | 0 / 0 / 0 |
+| 75 | 75 | 101 s | 44 / 52 % | 85 % | 463 | 1.77 GB | 1.00x | 0 / 0 / 0 |
+| 100 | 100 | 106 s | 56 / 62 % | 86 % | 620 | 2.25 GB | 1.00x | 0 / 0 / 0 |
+
+All levels passed. Start-up grows with the number of streams because starts are kept 2 s apart and streams of the *same* video are also kept 2 s apart in content (a 45 s clip has room for ~22 distinct phases; the rest start with a spacing warning). This is the Mac: the VM's number comes from running `scripts/load_test.sh live … --ramp 10,20,40,60,80,100 --readers 2 --apply` on/against the VM, which also saves 80 % of the last good level as the limit.
 
 ## 3. Loop soak (server side, 30 minutes)
 

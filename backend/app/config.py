@@ -47,6 +47,22 @@ class Settings(BaseSettings):
     # Used only to *display* RTSP URLs. Must be set in production.
     public_rtsp_host: str = "localhost"
     public_rtsp_port: int = 8554
+    # Extra names/IPs that users on other subnets (VPN, other LANs) use to reach
+    # this server, offered in the dashboard's address picker and URL exports.
+    rtsp_alt_hosts: CsvList = []
+    address_check_interval_s: float = 60.0  # how often to look for an IP / DNS change
+    # Compare the RTSP host with this machine's own IPs. Off in Docker (bridge
+    # network): the container only sees its private address, not the host's.
+    address_watch_interfaces: bool = True
+    # Cloudflare Access (remote access through a Cloudflare Tunnel). Team name or
+    # domain (acme / acme.cloudflareaccess.com) and the Access application's AUD tag.
+    # Requests that arrive through Cloudflare without a valid token are refused,
+    # even when these are unset (fail closed).
+    cf_access_team: str = ""
+    cf_access_aud: CsvList = []
+    # tunnel: only requests that came through Cloudflare need a token (LAN is open)
+    # all: every request needs a token (rig reachable only through the tunnel)
+    cf_access_mode: Literal["tunnel", "all"] = "tunnel"
     # Where FFmpeg publishes to (always the local MediaMTX instance).
     publish_rtsp_base: str = "rtsp://127.0.0.1:8554"
     mediamtx_api_url: str = "http://127.0.0.1:9997"
@@ -151,6 +167,12 @@ class Settings(BaseSettings):
     # --------------------------------------------------------------- logging
     stream_log_max_bytes: int = 1_000_000
     stream_log_backups: int = 2
+    # Health page: automatic quick check (no RTSP reads) every N seconds; 0 = off.
+    health_auto_interval_s: float = 600.0
+    # Daily database backup inside the app (works in Docker too); 0 = off.
+    backup_interval_h: float = 24.0
+    backup_keep: int = 14
+    backup_dir: Path | None = None  # default: <data_dir>/backups
     log_level: str = "INFO"
 
     # --------------------------------------------------------------- library
@@ -181,7 +203,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "copy_codecs", "copy_pix_fmts", "copy_profiles", "reserved_names",
-        "allowed_extensions", mode="before",
+        "allowed_extensions", "rtsp_alt_hosts", "cf_access_aud", mode="before",
     )
     @classmethod
     def _split_csv(cls, v):
@@ -200,6 +222,10 @@ class Settings(BaseSettings):
     @property
     def thumbnail_path(self) -> Path:
         return self.thumbnail_dir or self.data_dir / "thumbnails"
+
+    @property
+    def backup_path(self) -> Path:
+        return self.backup_dir or self.data_dir / "backups"
 
     @property
     def slate_path(self) -> Path:
@@ -222,8 +248,11 @@ class Settings(BaseSettings):
         # Same filesystem as the library so the final move is an atomic rename.
         return self.video_dir / ".uploads"
 
-    def public_rtsp_url(self, name: str) -> str:
-        return f"rtsp://{self.public_rtsp_host}:{self.public_rtsp_port}/{name}"
+    def public_rtsp_url(self, name: str, host: str | None = None) -> str:
+        h = host or self.public_rtsp_host
+        if ":" in h and not h.startswith("["):  # IPv6 literal
+            h = f"[{h}]"
+        return f"rtsp://{h}:{self.public_rtsp_port}/{name}"
 
     def publish_url(self, name: str) -> str:
         return f"{self.publish_rtsp_base.rstrip('/')}/{name}"

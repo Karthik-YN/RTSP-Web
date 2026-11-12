@@ -5,6 +5,7 @@ import type { AppConfig, Stream, ValidateResult, Video } from "../types/api";
 import { LivePlayer } from "./LivePlayer";
 import { CopyButton, ErrorBox, Modal, Pill, Spinner, WarnBox } from "./common";
 import { leadInBody, leadInError, LeadInFields, type LeadInValue } from "./LeadIn";
+import { useRtspAddress } from "../hooks/useRtspAddress";
 
 export interface StreamTemplate {
   videoId: number; name?: string; start?: string; end?: string; mode?: "loop" | "once"; forceTranscode?: boolean;
@@ -14,6 +15,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
   videos: Video[]; streams: Stream[]; config: AppConfig; initialVideoId?: number; template?: StreamTemplate;
   onClose: () => void; onCreated: () => void;
 }) {
+  const addr = useRtspAddress();
   const ready = useMemo(() => videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject"), [videos]);
   const existing = useMemo(() => streams.map((s) => s.name), [streams]);
   const [videoId, setVideoId] = useState<number | null>(template?.videoId ?? initialVideoId ?? ready[0]?.id ?? null);
@@ -105,8 +107,8 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
           <b>{created.name}</b> is starting. Paste this URL into the Video Analytics portal as the camera's RTSP URL:
         </p>
         <div className="mt-3 flex items-center gap-2 rounded-md bg-slate-950 px-3 py-2 font-mono text-sm text-emerald-300">
-          <span className="flex-1 break-all" data-testid="created-url">{created.rtsp_url}</span>
-          <CopyButton text={created.rtsp_url} label="Copy URL" />
+          <span className="flex-1 break-all" data-testid="created-url">{addr.url(created.rtsp_url)}</span>
+          <CopyButton text={addr.url(created.rtsp_url)} label="Copy URL" />
         </div>
         <LivePlayer streamId={created.id} className="mt-3" />
         <p className="mt-3 text-xs text-muted">
@@ -149,7 +151,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
             <input id="name" className={`input font-mono ${nameError ? "input-error" : ""}`} value={name}
               onChange={(e) => { setName(e.target.value); setNameTouched(true); }} autoComplete="off" />
             {nameError ? <p className="mt-1 text-xs text-red-600">{nameError}</p>
-              : <p className="mt-1 truncate font-mono text-xs text-muted">{config.rtsp_url_template.replace("{name}", name)}</p>}
+              : <p className="mt-1 truncate font-mono text-xs text-muted">{addr.url(config.rtsp_url_template.replace("{name}", name))}</p>}
           </div>
 
           <div>

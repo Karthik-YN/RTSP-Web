@@ -39,6 +39,23 @@ The RTSP URLs pasted into the portal contain the server's address, so **it must 
 
 The actual office IP or name is **not** known to this repository. Ask the network administrator.
 
+### Users on other subnets or the VPN
+
+The dashboard works from any address that reaches port 8080, because the UI talks to the API on the same address it was loaded from. Only the RTSP URLs contain a server address, and that address must be reachable from where the URL is used.
+
+* **Best:** one DNS name that resolves on every subnet and over the VPN (an A-record on the company DNS, which the VPN hands out). Use it as `RTSPM_PUBLIC_RTSP_HOST`. Then nobody needs a different URL, and a later IP change only needs a DNS update. `.local` (mDNS) names do **not** work across subnets or the VPN.
+* **If some networks reach the server under another IP or name** (for example a NAT or VPN-side address), list it in `RTSPM_RTSP_ALT_HOSTS=10.8.0.5,…`. The sidebar's **URLs use** picker then lets each person choose the address their copied URLs contain (remembered per browser). The picker also offers the address the page was opened with. URL exports accept `?host=` with one of these addresses only.
+* **Routing:** RTSP runs over TCP only (UDP is rejected), so it crosses routers, VPNs and NAT. Between subnets, only TCP 8554 and 8080 must be allowed (see the table below).
+* **The edge** should always get the main address, never a personal VPN address.
+
+The backend checks every 60 s (`RTSPM_ADDRESS_CHECK_INTERVAL_S`) whether its own IPs, or what `RTSPM_PUBLIC_RTSP_HOST` resolves to, changed. A change is logged as `network.address_changed` (and sent to the alert webhook). If `RTSPM_PUBLIC_RTSP_HOST` is a raw IP that is no longer on the server, the dashboard shows a warning that the edge's URLs no longer connect.
+
+What to ask IT for:
+
+1. A DHCP reservation (or a static IP) for the VM NIC's MAC address.
+2. A DNS A-record, for example `rig02.<company-domain>`, resolvable from the office LANs and the VPN.
+3. Firewall: TCP 8554 and 8080 from the office subnets and the VPN range to the VM.
+
 ## 3. Ports and firewall
 
 | Port | Who | Expose to |
@@ -60,13 +77,55 @@ sudo ufw enable
 
 ## 4. Choose how to run it
 
-| | **`python3 app.py`** (simple) | **`scripts/install.sh`** (permanent) |
-|---|---|---|
-| Setup | Copy the folder, run one command | Installer as root |
-| Starts after a server reboot | No, unless you add the cron line below | Yes |
-| Streams survive the app restarting | No: restart stops streams, then they come back | Yes: they keep playing |
-| HTTPS, nightly backups, restricted service accounts | No | Yes |
-| Good for | Trying it on the server, small team use | The real test rig (the ticket's reboot requirement) |
+| | **Docker** (portable, recommended for a new server) | **`python3 app.py`** (simple) | **`scripts/install.sh`** (permanent) |
+|---|---|---|---|
+| Setup | `docker compose up -d --build` | Copy the folder, run one command | Installer as root |
+| Needs on the server | Docker only | Python 3, FFmpeg | Debian 12 / Ubuntu 24.04 |
+| Starts after a server reboot | Yes (`restart: unless-stopped`) | No, unless you add the cron line below | Yes |
+| Streams survive the app restarting | No: a container restart stops streams, they come back in seconds | No: restart stops streams, then they come back | Yes: they keep playing |
+| Move to another server | Copy the folder + the `rig02-data` volume | Copy the folder + `storage/` | Re-run the installer, copy `/data` |
+| Remote access through Cloudflare | `--profile cloudflare` (built in) | Install cloudflared yourself | Install cloudflared yourself |
+| Good for | Proxmox VM (already runs Docker), any other server later | Trying it on the server | The ticket's reboot requirement with streams kept across app restarts |
+
+### Docker (any server)
+
+Needs Docker Engine 24+ with Compose v2.24+ (`docker compose version`). Step-by-step for the Proxmox VM, including validation and the capacity ramp: [PROXMOX_RUNBOOK.md](PROXMOX_RUNBOOK.md).
+
+```bash
+git clone <this-repository> rig02 && cd rig02        # or copy the folder
+cp .env.example .env
+#   set RTSPM_PUBLIC_RTSP_HOST=<server DNS name or fixed IP>
+docker compose up -d --build
+docker compose ps                                     # STATUS shows (healthy) within ~40 s
+```
+
+Open `http://<server>:8080`. RTSP URLs are `rtsp://<RTSPM_PUBLIC_RTSP_HOST>:8554/<name>`.
+
+* **One container is the whole rig:** dashboard, API, FFmpeg publishers and MediaMTX (the backend runs MediaMTX itself). MediaMTX's API, metrics and HLS ports stay inside the container; only 8080 and 8554 (TCP) are published. Other ports: set `RIG02_HTTP_PORT` / `RIG02_RTSP_PORT` in `.env`.
+* **State:** everything (database, videos, thumbnails, slates, logs) is in the named volume `rig02-data` (`/data` in the container). Uploads from the dashboard land in `/data/videos`. To keep videos in a host folder instead (e.g. a big disk on the Proxmox VM), add to the `rig02` service:
+
+  ```yaml
+      volumes:
+        - rig02-data:/data
+        - /srv/rig02/videos:/data/videos      # sudo chown -R 10001:10001 /srv/rig02/videos
+  ```
+
+* **Runs as a non-root user** (uid 10001), with tini as PID 1 so FFmpeg processes are reaped.
+* **Upgrade:** `git pull && docker compose up -d --build` (the volume is kept; the database migrates itself).
+* **Move to another server:** copy the folder and the volume:
+
+  ```bash
+  docker run --rm -v rig02_rig02-data:/data -v "$PWD":/backup debian:12 tar czf /backup/rig02-data.tgz -C /data .
+  # on the new server, after copying rig02-data.tgz next to docker-compose.yml:
+  docker volume create rig02_rig02-data
+  docker run --rm -v rig02_rig02-data:/data -v "$PWD":/backup debian:12 sh -c "tar xzf /backup/rig02-data.tgz -C /data && chown -R 10001:10001 /data"
+  docker compose up -d
+  ```
+
+  (The volume name is `<folder>_rig02-data`; check it with `docker volume ls`.) Update `RTSPM_PUBLIC_RTSP_HOST` if the new server has another name.
+* **Logs:** `docker compose logs -f rig02` (rotated, 5 × 20 MB).
+* **Trade-off:** restarting the container (or Docker) restarts the streams; readers reconnect after a few seconds. The systemd install keeps publishers running across backend restarts.
+* Tested by `scripts/test_linux.sh docker`: build, health, non-root, upload, RTSP read through the published port, slate lead-in, container restart with streams coming back, data kept in the volume.
 
 **Simple option.** On the VM:
 
@@ -124,6 +183,7 @@ What `install.sh` does (idempotent; re-run it to upgrade):
 Edit `/etc/rtsp-manager/rtsp-manager.env` (all variables are documented in `.env.example` and `backend/app/config.py`), then `sudo systemctl restart rtsp-manager`. Important settings:
 
 * `RTSPM_PUBLIC_RTSP_HOST`: the fixed name/IP used in URLs.
+* `RTSPM_RTSP_ALT_HOSTS`: other names/IPs for users on other subnets or the VPN (see section 2).
 * `RTSPM_MAX_ACTIVE_STREAMS` / `RTSPM_MAX_TRANSCODE_STREAMS`: capacity limits; set them from your load test.
 * `RTSPM_TRANSCODE_POLICY`, `RTSPM_COPY_*`: edge compatibility; set them from the edge validation.
 * `RTSPM_LISTEN_HOST=127.0.0.1`: when nginx is in front.
@@ -138,6 +198,36 @@ To require logins later, set `RTSPM_AUTH_ENABLED=true` in `/etc/rtsp-manager/rts
 sudo -u rtspmgr env RTSPM_ENV_FILE=/dev/null RTSPM_DATA_DIR=/var/lib/rtsp-manager /opt/rtsp-manager/backend/.venv/bin/python /opt/rtsp-manager/scripts/manage_users.py add admin --role admin
 sudo systemctl restart rtsp-manager
 ```
+
+## 4c. Remote access via Cloudflare (from anywhere on the internet)
+
+The dashboard (UI, API, live preview, uploads) is published through a **Cloudflare Tunnel**: `cloudflared` makes an outbound connection to Cloudflare, so no port is opened on the office router. A **Cloudflare Access** application in front of the hostname decides who may sign in (company SSO or a one-time PIN sent by e-mail).
+
+**The rig refuses every request that comes through Cloudflare without a valid Access token** (403), also while `RTSPM_CF_ACCESS_*` are not set. A tunnel without an Access policy therefore shows "no Cloudflare Access token" instead of an open dashboard. Office LAN access is unchanged (`RTSPM_CF_ACCESS_MODE=all` requires a token on the LAN too). The signed-in e-mail is recorded as the user on every event ("stream.created by alice@…").
+
+One-time setup in the Cloudflare dashboard (Zero Trust; the free plan covers up to 50 users):
+
+1. **Tunnel:** Networks → Tunnels → Create a tunnel (type *Cloudflared*), name it `rig02`. Copy the **token** into `.env` as `TUNNEL_TOKEN=…`.
+2. **Public hostname** on the tunnel: e.g. `rig02.<company-domain>` → service `http://rig02:8080` (Docker) or `http://localhost:8080` (systemd install / app.py with cloudflared on the host).
+3. **Access application:** Access → Applications → Add → *Self-hosted*, the same hostname. Policy: *Allow*, include "Emails ending in @<company-domain>" (or a list of e-mails). Session duration e.g. 24 h. Copy the application's **AUD tag**.
+4. In `.env`: `RTSPM_CF_ACCESS_TEAM=<team>` (from `<team>.cloudflareaccess.com`, Settings → Custom pages / team domain) and `RTSPM_CF_ACCESS_AUD=<AUD tag>`.
+5. Start it: `docker compose --profile cloudflare up -d`. Open `https://rig02.<company-domain>`: Cloudflare asks for the e-mail, then the dashboard opens.
+
+**RTSP from outside the office.** RTSP is not a web protocol, so `rtsp://rig02.<company-domain>/…` does not work through a tunnel hostname. Remote readers (VLC, ffmpeg, a model running on a laptop) use the **WARP client** instead:
+
+1. On the tunnel: *Private networks* → add the server's LAN IP as `/32` (e.g. `192.168.29.105/32`).
+2. Settings → WARP Client → device enrolment: allow the same e-mails; Split Tunnels: make sure the office subnet is *included*.
+3. Remote users install Cloudflare WARP, log in to the team, and use the normal URL `rtsp://<server LAN IP or office DNS name>:8554/<name>`. Pick that address in the dashboard's **URLs use** picker (add it to `RTSPM_RTSP_ALT_HOSTS` if it is not the main address).
+
+On-site edge devices keep reading over the LAN; Cloudflare is for people working remotely.
+
+Without WARP, a single machine can map the port with `cloudflared access tcp --hostname rtsp-rig02.<domain> --url localhost:8554` (needs a TCP public hostname `rtsp-rig02.<domain>` → `tcp://rig02:8554` on the tunnel and an Access application for it), then read `rtsp://localhost:8554/<name>`.
+
+Notes:
+* Uploads go through Cloudflare in 8 MB chunks, under its 100 MB request limit; a dropped connection resumes.
+* The live preview (HLS) works through the tunnel; expect a few seconds more delay than on the LAN.
+* Check Cloudflare's current plan terms for non-HTTP (TCP/WARP) traffic with whoever owns the Cloudflare account before relying on it for many users.
+* **Not verified here:** a real tunnel, Access login and WARP RTSP read need your Cloudflare account; they stay NOT RUN until done.
 
 ## 5. Operate
 

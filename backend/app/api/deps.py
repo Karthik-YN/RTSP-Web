@@ -12,6 +12,7 @@ from ..database import Database
 from ..services.auth import LoginGuard, User, UserStore, client_ip, read_token
 from ..services.events import EventLog
 from ..services.mediamtx_service import MediaMTXService
+from ..services.network_info import AddressWatcher, host_from_header, rtsp_hosts
 from ..services.recovery_service import RecoveryService
 from ..services.stream_supervisor import StreamSupervisor
 from ..services.system_monitor import SystemMonitor
@@ -33,6 +34,9 @@ class Context:
     users: UserStore
     secret: bytes
     throttle: LoginGuard
+    network: AddressWatcher | None = None
+    health: object = None   # services.health_test.HealthTester
+    backups: object = None  # services.health_test.BackupService
 
 
 def get_ctx(request: Request) -> Context:
@@ -40,8 +44,10 @@ def get_ctx(request: Request) -> Context:
 
 
 def current_user(request: Request, ctx: Context = Depends(get_ctx)) -> User:
+    cf_email = getattr(request.state, "cf_email", None)
     if not ctx.settings.auth_enabled:
-        return User("anonymous", "admin")
+        # No app login: a verified Cloudflare Access identity still names the actor.
+        return User(cf_email or "anonymous", "admin")
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         username = read_token(ctx.secret, token)
@@ -89,3 +95,18 @@ def if_match(if_match: str | None = Header(default=None, alias="If-Match")) -> i
         return int(if_match.strip().strip('"').removeprefix("W/").strip('"'))
     except ValueError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "If-Match must be the stream version number.")
+
+
+def request_rtsp_hosts(request: Request, ctx: Context) -> list[dict]:
+    """Address choices for this request (see services/network_info.py)."""
+    via_tunnel = "cf-ray" in request.headers or "cf-connecting-ip" in request.headers
+    return rtsp_hosts(ctx.settings, host_from_header(request.headers.get("host")), via_tunnel)
+
+
+def chosen_host(request: Request, ctx: Context, host: str | None) -> str | None:
+    """Validate an export's ``?host=`` against the offered choices (never an arbitrary host)."""
+    if not host:
+        return None
+    if host.lower().rstrip(".") not in {h["host"].lower().rstrip(".") for h in request_rtsp_hosts(request, ctx)}:
+        raise HTTPException(400, f"'{host}' is not one of this server's RTSP addresses.")
+    return host

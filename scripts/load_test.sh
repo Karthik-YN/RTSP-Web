@@ -10,6 +10,9 @@
 #
 #   scripts/load_test.sh live --url http://rig02:8080 --video-id 3 --streams 16 --readers 1 --minutes 30
 #       Load test of the real deployment through its API (see scripts/load_test.py).
+#
+#   scripts/load_test.sh live --url http://rig02:8080 --video-id 3 --ramp 10,20,40,60,80,100 --readers 2 --apply
+#       Capacity ramp: finds where streams degrade and saves 80% of that as the limit.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="${1:-}"; shift || true
@@ -20,5 +23,5 @@ case "$MODE" in
     exec "$ROOT/backend/.venv/bin/python" -m pytest -m performance -s tests/performance/test_capacity.py "$@" ;;
   live)
     exec python3 "$ROOT/scripts/load_test.py" "$@" ;;
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
 esac

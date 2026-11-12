@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { usePolling } from "../hooks/usePolling";
 import { useRig } from "../hooks/useRigData";
+import { useRtspAddress } from "../hooks/useRtspAddress";
 import { formatBytes, formatDuration, formatTime, parseTime } from "../lib/format";
 import { api, ApiError } from "../services/api";
 import type { AnalyticsDetail, AnalyticsSlot, RunResult, Stream, Video } from "../types/api";
@@ -20,6 +21,7 @@ const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").repla
 
 /** One analytics (e.g. People › PPE): its video placeholders and the RTSP streams running them. */
 export function AnalyticsPage() {
+  const addr = useRtspAddress();
   const id = Number(useParams().id);
   const { user, refreshAnalytics, refreshStreams } = useRig();
   const toast = useToast();
@@ -48,7 +50,7 @@ export function AnalyticsPage() {
   };
   const copyAll = async () => {
     try {
-      const txt = await api.analyticsUrls(id);
+      const txt = await api.analyticsUrls(id, "txt", addr.param);
       if (!txt.trim()) { toast("info", "No streams yet."); return; }
       if (await copyText(txt)) toast("ok", `Copied ${txt.trim().split("\n").length} RTSP URL(s).`);
     } catch (e) {
@@ -79,7 +81,7 @@ export function AnalyticsPage() {
           {data.streams > 0 && (
             <>
               <button className="btn-secondary" onClick={copyAll}>Copy all URLs</button>
-              <a className="btn-secondary" href={`/api/analytics/${id}/urls?format=csv`} download={`${slugify(data.name)}-rtsp.csv`}>
+              <a className="btn-secondary" href={`/api/analytics/${id}/urls?format=csv${addr.param ? `&host=${encodeURIComponent(addr.param)}` : ""}`} download={`${slugify(data.name)}-rtsp.csv`}>
                 <DownloadIcon /> CSV
               </a>
             </>
@@ -364,6 +366,7 @@ function UploadingOverlay({ name }: { name: string }) {
 }
 
 function StreamRow({ s, canWrite, onChanged }: { s: Stream; canWrite: boolean; onChanged: () => void }) {
+  const addr = useRtspAddress();
   const toast = useToast();
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -391,7 +394,7 @@ function StreamRow({ s, canWrite, onChanged }: { s: Stream; canWrite: boolean; o
       {queueText(s) && <span className="text-xs text-blue-700 dark:text-blue-300" title="Camera starts are kept 2 s apart">{queueText(s)}</span>}
       {rt.spacing_warning && <span className="text-xs text-amber-700 dark:text-amber-300" title={rt.spacing_warning}>clip too short for 2 s spacing</span>}
       <div className="ml-auto flex items-center gap-1">
-        <CopyButton text={s.rtsp_url} label="Copy URL" />
+        <CopyButton text={addr.url(s.rtsp_url)} label="Copy URL" />
         {canWrite && (
           live
             ? <button className="btn-ghost btn-xs" disabled={busy} onClick={() => act(() => api.action(s.id, "stop"), `${s.name} stopped`)} title="Stop"><StopIcon className="h-3.5 w-3.5" /></button>
@@ -401,7 +404,7 @@ function StreamRow({ s, canWrite, onChanged }: { s: Stream; canWrite: boolean; o
       </div>
       {confirm && (
         <ConfirmDialog title={`Delete ${s.name}?`} confirmLabel="Delete" danger onCancel={() => setConfirm(false)}
-          message={<>The URL <span className="font-mono">{s.rtsp_url}</span> stops working for good
+          message={<>The URL <span className="font-mono">{addr.url(s.rtsp_url)}</span> stops working for good
             {rt.viewer_count ? <> and <b>{rt.viewer_count} viewer(s)</b> are disconnected now</> : null}. The video stays in the library.</>}
           onConfirm={() => { setConfirm(false); act(() => api.remove(s.id), `${s.name} deleted`); }} />
       )}
@@ -499,6 +502,7 @@ function PickVideoDialog({ current, onClose, onPick, onUpload }: {
 function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
   slot: AnalyticsSlot; video: Video; analyticsName: string; onClose: () => void; onDone: () => void;
 }) {
+  const addr = useRtspAddress();
   const { streams, system, config } = useRig();
   const [countText, setCountText] = useState("1");
   const [lead, setLead] = useState<LeadInValue>({
@@ -541,7 +545,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
   };
 
   if (result) {
-    const urls = result.created.map((s) => s.rtsp_url).join("\n");
+    const urls = result.created.map((s) => addr.url(s.rtsp_url)).join("\n");
     return (
       <Modal title={`${result.created.length} stream(s) created`} onClose={onClose}>
         <p className="text-sm text-muted">Paste these into the Video Analytics portal as the cameras' RTSP URLs.
@@ -549,8 +553,8 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
         <ul className="mt-3 space-y-1">
           {result.created.map((s) => (
             <li key={s.id} className="flex items-center gap-2 rounded-lg bg-surface-2 px-2 py-1">
-              <span className="min-w-0 flex-1 truncate font-mono text-sm">{s.rtsp_url}</span>
-              <CopyButton text={s.rtsp_url} />
+              <span className="min-w-0 flex-1 truncate font-mono text-sm">{addr.url(s.rtsp_url)}</span>
+              <CopyButton text={addr.url(s.rtsp_url)} />
             </li>
           ))}
         </ul>

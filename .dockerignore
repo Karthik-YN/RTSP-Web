@@ -12,3 +12,6 @@ tests/.fixtures/large_*
 tests/.fixtures/_chunk*
 .claude
 bin
+.env
+*.env
+!.env.example

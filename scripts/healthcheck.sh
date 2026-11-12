@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Server-side health check for RIG-02. Run on the server (any user).
 #
-#   scripts/healthcheck.sh [--rtsp]     # --rtsp also reads 2 s from every RUNNING stream
+#   scripts/healthcheck.sh [--rtsp]     # --rtsp: full test, also reads 2 s from every RUNNING stream
 #
 # Exit code 0 = healthy, 1 = problems found.
 set -uo pipefail
@@ -36,13 +36,19 @@ if command -v ss >/dev/null; then
   echo " $EXPOSED " | grep -q " 8554 " && ok "RTSP 8554 listening" || bad "RTSP 8554 not listening"
 fi
 
-if command -v ffprobe >/dev/null && [[ $CHECK_RTSP -eq 1 ]]; then
-  AUTH=(); [[ -n "${RTSPM_USER:-}" ]] && AUTH=(-u "$RTSPM_USER:${RTSPM_PASSWORD:-}")
-  NAMES=$(curl -fs "${AUTH[@]}" "$API/api/streams" | python3 -c 'import json,sys; print(" ".join(s["name"] for s in json.load(sys.stdin) if s["status"]=="RUNNING"))' 2>/dev/null) \
-    || { bad "cannot list streams (set RTSPM_USER / RTSPM_PASSWORD)"; NAMES=""; }
-  for n in $NAMES; do
-    c=$(ffprobe -v error -rtsp_transport tcp -read_intervals %+2 -select_streams v:0 -show_entries packet=pts_time -of csv=p=0 "$RTSP_LOCAL/$n" 2>/dev/null | wc -l)
-    [[ "$c" -gt 10 ]] && ok "rtsp $n: $c packets in 2 s" || bad "rtsp $n: no media"
-  done
+# The server's own health test (same checks as the dashboard's Health page).
+# Without --rtsp it is the quick variant (no RTSP reads).
+AUTH=(); [[ -n "${RTSPM_USER:-}" ]] && AUTH=(-u "$RTSPM_USER:${RTSPM_PASSWORD:-}")
+Q="?quick=true"; [[ $CHECK_RTSP -eq 1 ]] && Q=""
+REPORT=$(curl -fs -m 60 "${AUTH[@]}" -X POST "$API/api/health/test$Q" 2>/dev/null) || { bad "health test endpoint failed (set RTSPM_USER / RTSPM_PASSWORD if login is on)"; REPORT=""; }
+if [[ -n "$REPORT" ]]; then
+  echo "$REPORT" | python3 -c '
+import json, sys
+r = json.load(sys.stdin)
+col = {"PASS": "\033[32mOK\033[0m  ", "WARN": "\033[33mWARN\033[0m", "FAIL": "\033[31mFAIL\033[0m", "SKIP": "..  "}
+for c in r["checks"]:
+    print("  %s %s: %s" % (col[c["status"]], c["name"], c["detail"]))
+print("  health test (%s): %s in %s s" % (r["mode"], r["overall"], r["duration_s"]))
+sys.exit(1 if r["overall"] == "FAIL" else 0)' || FAIL=1
 fi
 exit $FAIL

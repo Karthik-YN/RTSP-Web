@@ -185,12 +185,14 @@ def test_user_store(tmp_path):
 # ---------------------------------------------------------------- database
 def test_migrations_match_orm_and_enforce_constraints(tmp_path):
     db = Database(tmp_path / "t.db")
-    assert db.migrate() == 5
-    assert db.migrate() == 5  # idempotent
+    assert db.migrate() == 6
+    assert db.migrate() == 6  # idempotent
     insp = inspect(db.engine)
     for table in Base.metadata.sorted_tables:
         cols = {c["name"] for c in insp.get_columns(table.name)}
         assert {c.name for c in table.columns} == cols, table.name
+    # v6: runtime settings (raw SQL, no ORM model)
+    assert {c["name"] for c in insp.get_columns("app_settings")} == {"key", "value", "updated_at", "updated_by"}
 
     con = sqlite3.connect(tmp_path / "t.db")
     ins = ("INSERT INTO streams (name, source_rel_path, source_fingerprint, playback_mode, desired_state, "
@@ -220,7 +222,7 @@ def test_migration_upgrades_a_v1_database_in_place(tmp_path):
                 "'RUNNING','now','now','alice')")
     con.commit()
     con.close()
-    assert Database(path).migrate() == 5
+    assert Database(path).migrate() == 6
     con = sq.connect(path)
     assert con.execute("select name, owner, protected, group_id, slot_id from streams").fetchone() == \
         ("cam", "alice", 0, None, None)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -21,7 +21,7 @@ from ..database import utcnow
 from ..models import Stream, StreamGroup
 from ..services.auth import User
 from ..services.errors import ServiceError
-from .deps import Context, current_user, get_ctx, require_operator
+from .deps import Context, chosen_host, current_user, get_ctx, require_operator
 from .streams import guard
 
 router = APIRouter(tags=["groups"])
@@ -110,16 +110,18 @@ def delete_group(gid: int, ctx: Context = Depends(get_ctx), user: User = Depends
 
 
 @router.get("/api/groups/{gid}/urls", response_class=PlainTextResponse)
-def group_urls(gid: int, format: Literal["txt", "csv"] = Query(default="txt"), ctx: Context = Depends(get_ctx),
+def group_urls(gid: int, request: Request, format: Literal["txt", "csv"] = Query(default="txt"),
+               host: str | None = Query(default=None), ctx: Context = Depends(get_ctx),
                _: User = Depends(current_user)):
     """RTSP URLs of a group, one per line (txt) or name,url (csv), for the portal or measure_recovery.py."""
     with ctx.db.session() as s:
         if s.get(StreamGroup, gid) is None:
             raise HTTPException(404, "Group not found.")
         rows = list(s.scalars(select(Stream).where(Stream.group_id == gid).order_by(Stream.name)))
+    h = chosen_host(request, ctx, host)
     if format == "csv":
-        return "name,rtsp_url\n" + "".join(f"{r.name},{ctx.settings.public_rtsp_url(r.name)}\n" for r in rows)
-    return "".join(f"{ctx.settings.public_rtsp_url(r.name)}\n" for r in rows)
+        return "name,rtsp_url\n" + "".join(f"{r.name},{ctx.settings.public_rtsp_url(r.name, h)}\n" for r in rows)
+    return "".join(f"{ctx.settings.public_rtsp_url(r.name, h)}\n" for r in rows)
 
 
 async def run_bulk(ctx: Context, ids: list[int], action: str, user: User) -> list[dict]:

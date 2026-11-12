@@ -168,9 +168,11 @@ Other streams are never affected.
 * The API never accepts filesystem paths. Videos are referenced by DB id, every resolved path must stay under the library root, and symlinks are ignored.
 * Server paths are stripped from user-facing error messages. Passwords are never logged or returned.
 * Both services run as dedicated non-root users under systemd hardening (`ProtectSystem=strict`, `NoNewPrivileges`, no capabilities). The backend may only start, restart or stop `mediamtx.service` (polkit rule).
+* **Remote access (Cloudflare):** the dashboard is published through a Cloudflare Tunnel (outbound connection, no open port) with a Cloudflare Access application in front. The backend verifies the `Cf-Access-Jwt-Assertion` JWT on every request that came through Cloudflare (RS256 against the team's published keys, audience = the Access application's AUD, issuer = the team domain, expiry with 30 s leeway; keys cached 1 h, refetched on rotation). Such a request without a valid token is refused with 403, also when Access is not configured on the server (fail closed), so a tunnel can never expose the rig without a sign-in. The verified e-mail is the acting user on events. LAN requests are unchanged unless `RTSPM_CF_ACCESS_MODE=all`.
+* **Docker:** one image, non-root (uid 10001), tini as PID 1; only 8080 and 8554 published; MediaMTX's API/metrics/HLS stay on the container's loopback.
 * MediaMTX exposes only RTSP :8554. The Control API and metrics bind to 127.0.0.1. RTMP, HLS, WebRTC, SRT, MoQ, pprof and playback are disabled, which a test asserts. Publishing is loopback-only.
 
-## 9. Database schema (SQLite, `PRAGMA user_version` = 5)
+## 9. Database schema (SQLite, `PRAGMA user_version` = 6)
 
 **videos**: `id`, `rel_path` UNIQUE, `size_bytes`, `mtime_ns`, `inode`, `device`, `quick_hash`, `status` (READY|INVALID|MISSING), `error`, `container`, `duration_s`, `width`, `height`, `fps`, `fps_text`, `is_vfr`, `video_codec`, `video_profile`, `pix_fmt`, `bit_depth`, `field_order`, `bitrate_bps`, `audio_codec`, `keyframe_interval_s`, `compat_mode` (copy|transcode|reject), `compat_reasons` JSON, `compat_warnings` JSON, `probe_json`, `thumbnail`, `created_at`, `updated_at`, `last_seen_at`.
 
@@ -186,9 +188,14 @@ Other streams are never affected.
 
 **v5:** lead-in: `streams.lead_in_mode` (CHECK none|fixed|hold, default `none` for existing rows), `lead_in_s` (CHECK 0–120, default 5), `hold_max_s` (NULL = no timeout). New streams take `RTSPM_DEFAULT_LEAD_IN_MODE` (fixed).
 
+**v6:** **app_settings** (`key` PRIMARY KEY, `value`, `updated_at`, `updated_by`): settings changed from the dashboard. Today the capacity limits (`max_active_streams`, `max_transcode_streams`), which override the `RTSPM_*` defaults after a load test on the actual server.
+
 Users stay in the hashed users file (not SQLite): atomic writes, works with the CLI and is backed up nightly.
 
 ## 9a. Observability
+
+* **Health test** (`services/health_test.py`, Health page, `POST /api/health/test`, `scripts/healthcheck.sh`): MediaMTX up, boot recovery finished, no MediaMTX-internal port reachable on the server's network addresses (TCP connect from the server to its own LAN IPs), FFmpeg/MediaMTX versions, disk free vs. the reserve, video and data folders writable, SQLite `quick_check`, newest database backup ≤ 36 h, NTP sync (`timedatectl`, SKIP in containers), CPU/RAM vs. the warning thresholds and streams vs. the limit, and (full test only) 2 s read of every running stream over loopback. Hold-until-viewer streams are never read, because a read would start their video. An automatic quick check runs every `RTSPM_HEALTH_AUTO_INTERVAL_S` (600 s) and records `health.degraded` / `health.recovered` only on changes (alerted).
+* **Backups:** the backend copies the database daily with SQLite's online backup API to `<data_dir>/backups/<time>/` (`RTSPM_BACKUP_INTERVAL_H`, `RTSPM_BACKUP_KEEP` = 14), also in Docker where no systemd timer runs.
 
 * **Live preview:** browsers can't play RTSP, so the dashboard plays the same video as HLS (`hls.js`; native in Safari). MediaMTX's HLS server binds to loopback and the backend proxies it at `/api/streams/{id}/live/`, so no port is added and the login applies. There is no re-encoding, and HLS is generated only while someone watches (closed after 60 s idle). Preview sessions are excluded from viewer counts. MediaMTX needs 3 segments before the first playlist and a segment can't be shorter than the keyframe interval, so the first picture takes about 4.5 s with 2 s keyframes and 20 to 30 s with 10 s keyframes. The RTSP URL isn't affected.
 * **Viewers:** the count is RTSP readers from MediaMTX (the edge, VLC, test tools). Each reader shows its address and, when reverse DNS knows it, its host name (looked up in the background, cached 10 min). The day's peak is kept per stream in memory, so it restarts at 0 after a backend restart. Dashboard preview watchers are counted separately: the backend notes each distinct browser (address + user agent) fetching the stream's HLS playlist and counts those seen in the last 20 s.

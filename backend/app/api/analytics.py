@@ -13,7 +13,7 @@ import re
 from types import SimpleNamespace
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -24,7 +24,7 @@ from ..models import Analytics, AnalyticsCategory, AnalyticsSlot, Stream, Video
 from ..schemas import TimeValue
 from ..services.auth import User
 from ..services.errors import ServiceError
-from .deps import Context, current_user, get_ctx, require_operator
+from .deps import Context, chosen_host, current_user, get_ctx, require_operator
 from .groups import run_bulk
 from .streams import _cfg, _proc_index, stream_out
 from .videos import video_out
@@ -378,13 +378,15 @@ def _stream_ids(ctx: Context, aid: int) -> tuple[str, list[Stream]]:
 
 
 @router.get("/{aid}/urls", response_class=PlainTextResponse)
-def analytics_urls(aid: int, format: Literal["txt", "csv"] = Query(default="txt"), ctx: Context = Depends(get_ctx),
+def analytics_urls(aid: int, request: Request, format: Literal["txt", "csv"] = Query(default="txt"),
+                   host: str | None = Query(default=None), ctx: Context = Depends(get_ctx),
                    _: User = Depends(current_user)):
     """RTSP URLs of an analytics' streams, one per line (txt) or name,url (csv), for the portal."""
     _, rows = _stream_ids(ctx, aid)
+    h = chosen_host(request, ctx, host)
     if format == "csv":
-        return "name,rtsp_url\n" + "".join(f"{r.name},{ctx.settings.public_rtsp_url(r.name)}\n" for r in rows)
-    return "".join(f"{ctx.settings.public_rtsp_url(r.name)}\n" for r in rows)
+        return "name,rtsp_url\n" + "".join(f"{r.name},{ctx.settings.public_rtsp_url(r.name, h)}\n" for r in rows)
+    return "".join(f"{ctx.settings.public_rtsp_url(r.name, h)}\n" for r in rows)
 
 
 @router.post("/{aid}/{action}")

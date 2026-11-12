@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { api, ApiError } from "../services/api";
 import type { AnalyticsCategory, AppConfig, MediaMTXStatus, Stream, SystemInfo, User, Video } from "../types/api";
 import { usePolling } from "./usePolling";
+import { RtspAddressProvider } from "./useRtspAddress";
 
 interface RigData {
   user: User;
@@ -39,7 +40,7 @@ export function RigDataProvider({ user, config, children }: { user: User; config
     refreshAnalytics: analytics.refresh,
     refreshAll: () => { streams.refresh(); system.refresh(); mediamtx.refresh(); analytics.refresh(); },
   };
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={value}><RtspAddressProvider config={config}>{children}</RtspAddressProvider></Ctx.Provider>;
 }
 
 export function useRig(): RigData {

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { NavLink, useLocation } from "react-router-dom";
 import { api, ApiError } from "../services/api";
 import { useRig } from "../hooks/useRigData";
+import { HOST_KIND_LABEL, urlHost, useRtspAddress } from "../hooks/useRtspAddress";
 import { formatBitrate, formatBytes, formatDuration } from "../lib/format";
 import { useTheme, type ThemePref } from "../lib/theme";
 import { Avatar, ErrorBox, Modal, Skeleton, Spinner, useToast, WarnBox } from "./common";
@@ -9,7 +10,7 @@ import { CreateStreamDialog, type StreamTemplate } from "./CreateStreamDialog";
 import { isProblem } from "./StreamsTable";
 import {
   ActivityIcon, CameraIcon, ChevronIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
-  PlusIcon, SearchIcon, SunIcon, UsersIcon,
+  PlusIcon, SearchIcon, ServerIcon, SunIcon, UsersIcon,
 } from "./icons";
 
 // ------------------------------------------------------------------ create-stream launcher
@@ -63,6 +64,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     { to: "/streams", label: "Streams", icon: <GridIcon />,
       badge: problems ? <Badge tone="bad">{problems}</Badge> : streams ? <Badge>{streams.length}</Badge> : null },
     { to: "/library", label: "Video library", icon: <FilmIcon />, badge: videos ? <Badge>{videos.length}</Badge> : null },
+    { to: "/health", label: "Health", icon: <ServerIcon /> },
     { to: "/events", label: "Events", icon: <ActivityIcon /> },
   ];
   if (user.is_admin && user.auth_enabled) items.push({ to: "/users", label: "Users", icon: <UsersIcon /> });
@@ -90,11 +92,40 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
         </nav>
         <AnalyticsNav />
         <div className="border-t border-line px-4 py-3 text-xs text-subtle">
-          <div className="truncate" title="RTSP host shown in stream URLs">rtsp://{config.public_rtsp_host}:{config.public_rtsp_port}</div>
+          <RtspAddressPicker port={config.public_rtsp_port} />
           <div>v{config.version}</div>
         </div>
       </aside>
     </>
+  );
+}
+
+/** Which server address stream URLs are copied with (for users on other subnets / VPN). */
+export function RtspAddressPicker({ port }: { port: number }) {
+  const addr = useRtspAddress();
+  const browser = addr.hosts.find((h) => h.kind === "browser");
+  if (addr.hosts.length <= 1) {
+    return <div className="truncate" title="Server address used in stream URLs">rtsp://{urlHost(addr.host ?? "")}:{port}</div>;
+  }
+  return (
+    <div className="space-y-1">
+      <label className="block">
+        <span className="sr-only">RTSP address</span>
+        <span className="mb-0.5 block text-[11px] uppercase tracking-wide">URLs use</span>
+        <select className="input h-8 w-full py-0 font-mono text-xs" value={addr.host ?? ""} aria-label="RTSP address"
+          title="Server address used in copied RTSP URLs" onChange={(e) => addr.setHost(e.target.value)}>
+          {addr.hosts.map((h) => (
+            <option key={h.host} value={h.host}>{urlHost(h.host)}:{port} ({HOST_KIND_LABEL[h.kind]})</option>
+          ))}
+        </select>
+      </label>
+      {browser && addr.host !== browser.host && (
+        <button className="text-left text-[11px] text-brand hover:underline" onClick={() => addr.setHost(browser.host)}>
+          You opened this page via {urlHost(browser.host)}. Use it in URLs?
+        </button>
+      )}
+      {addr.custom && <div className="text-[11px] text-amber-700 dark:text-amber-300">Not the main address: give the edge the main one.</div>}
+    </div>
   );
 }
 

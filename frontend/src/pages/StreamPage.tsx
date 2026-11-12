@@ -10,10 +10,12 @@ import { LivePlayer } from "../components/LivePlayer";
 import { canControl, queueText, useStreamActions } from "../components/StreamsTable";
 import { describeLeadIn, GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import { ChevronLeftIcon, ImageIcon, LockIcon, PlayIcon, RestartIcon, StopIcon, TrashIcon } from "../components/icons";
+import { useRtspAddress } from "../hooks/useRtspAddress";
 
 type Tab = "overview" | "logs" | "viewers" | "history";
 
 export function StreamPage() {
+  const addr = useRtspAddress();
   const { id } = useParams();
   const sid = Number(id);
   const rig = useRig();
@@ -69,7 +71,7 @@ export function StreamPage() {
           )}
         </div>
         <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm text-emerald-300 ring-1 ring-inset ring-white/10">
-          <span className="flex-1 break-all">{s.rtsp_url}</span><CopyButton text={s.rtsp_url} label="Copy URL" />
+          <span className="flex-1 break-all">{addr.url(s.rtsp_url)}</span><CopyButton text={addr.url(s.rtsp_url)} label="Copy URL" />
         </div>
         <div className="mt-3 space-y-2">
           {leadText(s) && (

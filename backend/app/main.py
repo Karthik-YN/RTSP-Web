@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import __version__
 from .api import routers
@@ -28,6 +29,9 @@ from .database import Database
 from .services.auth import LoginGuard, UserStore, load_secret
 from .services.errors import ServiceError
 from .services.alerts import AlertSender
+from .services.cf_access import AccessError, CloudflareAccess
+from .services.health_test import BackupService, HealthTester
+from .services.network_info import AddressWatcher
 from .services.events import EventLog
 from .services.file_manager import LibraryError
 from .services.ffprobe_service import ffmpeg_version
@@ -93,8 +97,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sysmon = SystemMonitor(settings)
         users = UserStore(settings.users_path)
         secret = load_secret(settings.secret_key, settings.data_dir / "secret_key")
+        network = AddressWatcher(settings, events, settings.address_check_interval_s)
         app.state.ctx = Context(settings, db, events, library, mtx, sup, recovery, sysmon, users, secret,
-                                LoginGuard())
+                                LoginGuard(), network)
+        ctx = app.state.ctx
+        ctx.backups = BackupService(settings, events)
+        ctx.health = HealthTester(ctx)
 
         if settings.auth_enabled and users.count() == 0:
             log.warning("Authentication is enabled but %s has no users; create one with "
@@ -104,6 +112,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         events.add("backend.start", f"backend {__version__} starting (removed {removed} stale upload(s))")
 
         sysmon.start()
+        network.start()
+        ctx.backups.start()
+        ctx.health.start(settings.health_auto_interval_s)
         mtx.start_monitor()
         sup.start_monitor()
         library.start_scanner()
@@ -131,6 +142,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await sup.shutdown()
             await library.stop()
             await sysmon.stop()
+            await network.stop()
+            await ctx.health.stop()
+            await ctx.backups.stop()
             await mtx.stop()
             events.add("backend.stop", "backend stopped")
             alerts.close()
@@ -160,6 +174,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             msgs.append(f"{loc}: {e.get('msg')}" if loc else e.get("msg"))
         return JSONResponse({"detail": "; ".join(msgs), "errors": exc.errors()}, status_code=422)
 
+    cf = CloudflareAccess(settings.cf_access_team, settings.cf_access_aud, settings.cf_access_mode)
+    app.state.cf_access = cf
+
+    @app.middleware("http")
+    async def _cloudflare_access(request: Request, call_next):
+        try:
+            ident = await cf.check(request.headers, request.cookies)
+        except AccessError as exc:
+            log.warning("refused %s %s from %s: %s", request.method, request.url.path,
+                        request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?"), exc)
+            return JSONResponse({"detail": str(exc)}, status_code=403)
+        request.state.cf_email = ident.email if ident else None
+        return await call_next(request)
+
     @app.middleware("http")
     async def _headers(request: Request, call_next):
         response = await call_next(request)
@@ -169,6 +197,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
             response.headers["Cache-Control"] = "no-store"
         return response
+
+    # Compress JSON and the dashboard's assets (the stream list is ~2 KB per stream,
+    # polled every 2 s: matters through Cloudflare); never the live-preview video.
+    app.add_middleware(_SelectiveGZip, minimum_size=1024)
 
     for r in routers:
         app.include_router(r)
@@ -188,6 +220,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
+
+
+class _SelectiveGZip:
+    """GZip for everything except live-preview media (already compressed video)."""
+
+    def __init__(self, app, minimum_size: int = 1024):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and "/live/" not in scope.get("path", ""):
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
 
 
 # Creating the app does no I/O; directories, DB and processes are set up in lifespan.

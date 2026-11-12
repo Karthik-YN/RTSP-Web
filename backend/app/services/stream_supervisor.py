@@ -42,6 +42,7 @@ from .ffmpeg_manager import (LogSink, PublishPlan, PublisherProcess, build_comma
 from .ffprobe_service import ProbeError, keyframe_at_or_before, video_end_time
 from .file_manager import LibraryError, describe_change, fingerprint, public_error
 from .mediamtx_service import DOWN, UP, MediaMTXService
+from .runtime_settings import RuntimeSettings
 from .slate_service import SlateService, SlateSpec, fps_text_of, profile_of
 from .start_gate import StartGate, Ticket, phase_delay
 from .validation import ValidationError, validate_segment, validate_stream_name
@@ -104,6 +105,7 @@ class StreamSupervisor:
         self.library = library
         self.events = events
         self.runtimes: dict[int, Runtime] = {}
+        self.limits = RuntimeSettings(db, settings)
         self._create_lock = asyncio.Lock()
         self._monitor_task: asyncio.Task | None = None
         self._start_sem = asyncio.Semaphore(settings.recovery_concurrency)
@@ -200,14 +202,20 @@ class StreamSupervisor:
 
     def _check_capacity(self, will_transcode: bool, exclude_id: int | None = None) -> None:
         active, transcodes = self._counts(exclude_id)
-        if active >= self.s.max_active_streams:
+        if active >= self.max_active():
             raise CapacityExceeded(
                 f"Capacity reached: {active} streams are already running (limit "
-                f"{self.s.max_active_streams}, RTSPM_MAX_ACTIVE_STREAMS). Stop a stream first.")
-        if will_transcode and transcodes >= self.s.max_transcode_streams:
+                f"{self.max_active()}, set on the Health page or RTSPM_MAX_ACTIVE_STREAMS). Stop a stream first.")
+        if will_transcode and transcodes >= self.max_transcode():
             raise CapacityExceeded(
                 f"Transcoding capacity reached: {transcodes} transcoded streams are running (limit "
-                f"{self.s.max_transcode_streams}). Stop one, or use an H.264 8-bit source that can be copied.")
+                f"{self.max_transcode()}). Stop one, or use an H.264 8-bit source that can be copied.")
+
+    def max_active(self) -> int:
+        return self.limits.get_int("max_active_streams")
+
+    def max_transcode(self) -> int:
+        return self.limits.get_int("max_transcode_streams")
 
     # ================================================================ config
     async def prepare(self, cfg: StreamConfig) -> dict:

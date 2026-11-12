@@ -215,10 +215,53 @@ export interface MediaMTXStatus {
   total_readers: number;
 }
 
+export type CheckStatus = "PASS" | "WARN" | "FAIL" | "SKIP";
+
+export interface HealthCheck {
+  id: string;
+  name: string;
+  status: CheckStatus;
+  detail: string;
+  ms: number;
+  data: Record<string, unknown>;
+}
+
+export interface HealthReport {
+  mode: "full" | "quick";
+  overall: "PASS" | "WARN" | "FAIL";
+  started_at: string;
+  duration_s: number;
+  server: string;
+  summary: Record<CheckStatus, number>;
+  checks: HealthCheck[];
+}
+
+export interface LimitInfo {
+  value: number;
+  default: number;
+  overridden: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+  min: number;
+  max: number;
+}
+
+export interface Capacity {
+  max_active_streams: LimitInfo;
+  max_transcode_streams: LimitInfo;
+}
+
+export interface RtspHost {
+  host: string;
+  kind: "canonical" | "alternate" | "browser";
+}
+
 export interface AppConfig {
   version: string;
   public_rtsp_host: string;
   public_rtsp_port: number;
+  rtsp_hosts?: RtspHost[];
+  server_addresses?: string[];
   rtsp_url_template: string;
   stream_name_pattern: string;
   reserved_names: string[];

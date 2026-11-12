@@ -22,13 +22,15 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 
 ## Endpoints
 
+Requests that arrive through Cloudflare (a `Cf-Ray` / `Cf-Connecting-Ip` header) need a valid Cloudflare Access token (`Cf-Access-Jwt-Assertion` header or `CF_Authorization` cookie), else 403; the verified e-mail is the acting user. See DEPLOYMENT.md §4c.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/health[?strict=true]` | Liveness: `{status: ok|degraded, mediamtx, recovery, version}` (no auth) |
 | POST | `/api/auth/login` · `/api/auth/logout` · GET `/api/auth/me` | Session handling |
 | POST | `/api/auth/password` `{current_password,new_password}` | Change your own password |
 | GET/POST | `/api/users` · PATCH/DELETE `/api/users/{name}` | **Admin**: list/create users, change role or reset password, delete (the last admin is protected) |
-| GET | `/api/config` | Public RTSP host/port, URL template, name rules, limits, output profile, warnings |
+| GET | `/api/config` | Public RTSP host/port, `rtsp_hosts` (address choices: canonical, alternates, the address this request used), `server_addresses`, URL template, name rules, limits, output profile, warnings |
 | GET | `/api/videos?search=&status=&include_missing=` | Library with FFprobe metadata and compatibility verdict |
 | POST | `/api/videos/refresh` | Rescan the server folder now |
 | POST | `/api/videos/upload/check` `{filename,size}` | Pre-flight: name and disk-space check, no data sent |
@@ -55,7 +57,7 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | GET/POST | `/api/groups` · DELETE `/api/groups/{id}` | Stream groups ("demo sets"); deleting a group keeps its streams |
 | POST | `/api/groups/members` `{stream_ids, group_id}` | Put streams into a group (`null` removes them) |
 | POST | `/api/groups/{id}/start\|stop\|restart` | Act on every stream of a group |
-| GET | `/api/groups/{id}/urls?format=txt\|csv` | All RTSP URLs of a group (for the portal or `measure_recovery.py`) |
+| GET | `/api/groups/{id}/urls?format=txt\|csv&host=` | All RTSP URLs of a group (for the portal or `measure_recovery.py`). `host` must be one of `rtsp_hosts` (else 400) |
 | GET | `/api/analytics` | Left-taskbar tree: categories → analytics with `slots`, `slot_ids`, `streams`, `running`, `problems`, `viewers` |
 | GET | `/api/analytics/{id}` | One analytics: its video placeholders (`slots`), each with its video and the streams run from it |
 | POST · PATCH · DELETE | `/api/analytics` · `/api/analytics/{id}` | Add (`{name, category_id, description}`), rename/move/describe, delete (409 while it still has placeholders) |
@@ -65,7 +67,11 @@ Every stream has a `version`. Send it as `If-Match: <version>` on PATCH/start/st
 | POST | `/api/analytics/{id}/slots/reorder` `{slot_ids}` | Order of the placeholder cards |
 | POST | `/api/analytics/slots/{id}/streams` `{count 1–20, name_prefix?, start, end, mode, start_now}` | Create *count* cameras from the placeholder's video, named `<prefix>-1…N` (default prefix: the analytics name). Returns `{created, errors, skipped}`: if capacity runs out midway, the ones created are kept |
 | POST | `/api/analytics/{id}/start\|stop\|restart` | Act on every stream of the analytics |
-| GET | `/api/analytics/{id}/urls?format=txt\|csv` | All RTSP URLs of the analytics, for the portal |
+| GET | `/api/analytics/{id}/urls?format=txt\|csv&host=` | All RTSP URLs of the analytics, for the portal (`host` as above) |
+| POST | `/api/health/test[?quick=true]` | Run the health test now: `{mode, overall PASS/WARN/FAIL, summary, checks:[{id, name, status PASS/WARN/FAIL/SKIP, detail, ms, data}]}`. The full test reads 2 s from every running stream over loopback (streams waiting for their first viewer are skipped, never woken); `quick` opens no RTSP session |
+| GET | `/api/health/test/last` | `{full, quick, auto_interval_s}`: the newest full report and the newest automatic quick check |
+| GET · PUT | `/api/settings/capacity` | Stream limits `max_active_streams` (1–500) and `max_transcode_streams` (0–64): value, default, who changed it. PUT `{max_active_streams?, max_transcode_streams?, reset?:[keys]}` (operator); saved in the database, survives restarts |
+| POST | `/api/backup` | Back up the database now (operator); a daily copy is made automatically, 14 kept |
 | GET | `/api/metrics` | Prometheus text format (streams by status, per-stream up/viewers/egress/restarts, MediaMTX up, CPU, RAM, disk) |
 | GET | `/api/system` | CPU, RAM, disks, network, FFmpeg processes, stream counts and capacity, viewers, warnings, `start_queue` (`spacing_s`, `ready_wait_s`, `phase_margin_s`, `queued`, `launching`) |
 | GET | `/api/system/recovery` | Last boot-recovery report (seconds after OS boot for every stream) |

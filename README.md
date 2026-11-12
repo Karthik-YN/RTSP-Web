@@ -13,6 +13,19 @@ Video file ─▶ Web dashboard ─▶ FastAPI backend ─▶ FFmpeg publisher (
 * **Codecs:** H.264 8-bit is stream-copied; H.265/VP9/AV1/10-bit are transcoded to H.264 (with a CPU warning) or refused, per policy. Audio is always dropped.
 * **Teams:** direct access for everyone on the network (no login), stream notes, groups ("demo sets") with start/stop all and URL export, bulk actions, clone, audit log.
 * **Operations:** streams keep playing through backend restarts and upgrades; HTTPS option; nightly backups; webhook alerts (Teams/Slack); Prometheus metrics; per-stream availability and bitrate; resumable uploads; light/dark UI.
+* **Health page:** one button runs every check (MediaMTX, exposed ports, disk, backups, database, CPU/RAM headroom, every running stream read over RTSP) with PASS/WARN/FAIL and a downloadable report; a quick check runs by itself every 10 min and alerts on changes. Capacity limits are set there from a load test.
+* **Runs anywhere:** one Docker image (`docker compose up -d`) on any server, or the systemd installer, or `python3 app.py`.
+* **From anywhere:** the dashboard can be published on the internet through a Cloudflare Tunnel behind Cloudflare Access (company sign-in); remote RTSP readers use Cloudflare WARP. Users on other subnets/VPN pick the address their copied URLs use.
+
+## Quick start with Docker (any server)
+
+```bash
+cp .env.example .env            # set RTSPM_PUBLIC_RTSP_HOST=<server name or IP>
+docker compose up -d --build    # dashboard http://<server>:8080, RTSP rtsp://<server>:8554/<name>
+docker compose --profile cloudflare up -d   # optional: internet access via Cloudflare (docs/DEPLOYMENT.md §4c)
+```
+
+Everything (database, videos, logs) is in the `rig02-data` volume; moving to another server is copying the folder and that volume (docs/DEPLOYMENT.md §4).
 
 ## Quick start: `python3 app.py`
 
@@ -100,7 +113,8 @@ Edge-dependent tests are manual: **[docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATIO
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Requirements, decisions on ambiguities, design, state machine, concurrency, recovery, security, **DB schema**, risks, limitations |
 | [docs/FFMPEG.md](docs/FFMPEG.md) | Publisher command, why not `-stream_loop`, clean loop points, loop counter, seeking accuracy, MediaMTX early readers, codec policy (with measurements) |
 | [docs/API.md](docs/API.md) | REST API (also live at `/docs`) |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | VM, fixed address, firewall, install, operate, verify |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | VM, fixed address, firewall, Docker / install / app.py, Cloudflare remote access, operate, verify |
+| [docs/PROXMOX_RUNBOOK.md](docs/PROXMOX_RUNBOOK.md) | **Step by step on the VM:** inspect, copy the code, validate (`test_linux.sh all`), deploy, health test, capacity ramp, reboot recovery, Cloudflare |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptoms → causes → fixes |
 | [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Test strategy, automated suite, **13-case QA matrix** |
 | [docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATION.md) | Manual runbook for the 5.x edge (30-min loop, 16-stream reboot) |

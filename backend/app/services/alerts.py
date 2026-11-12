@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 ALERT_KINDS = {
     "stream.error", "stream.source_invalid", "stream.stalled", "mediamtx.down", "mediamtx.up",
-    "recovery.blocked", "recovery.done", "system.warning",
+    "recovery.blocked", "recovery.done", "system.warning", "network.address_changed", "health.degraded", "backup.failed",
 }
 
 

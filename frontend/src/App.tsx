@@ -9,6 +9,7 @@ import { RigDataProvider, useRig } from "./hooks/useRigData";
 import { useTheme } from "./lib/theme";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { EventsPage } from "./pages/EventsPage";
+import { HealthPage } from "./pages/HealthPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { Login } from "./pages/Login";
 import { StreamPage } from "./pages/StreamPage";
@@ -71,6 +72,7 @@ export default function App() {
                 <Route path="/library" element={<LibraryPage />} />
                 <Route path="/analytics/:id" element={<AnalyticsPage />} />
                 <Route path="/events" element={<EventsPage />} />
+                <Route path="/health" element={<HealthPage />} />
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="*" element={<Navigate to="/streams" replace />} />
               </Routes>

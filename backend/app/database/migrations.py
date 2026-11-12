@@ -209,6 +209,18 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE streams ADD COLUMN hold_max_s REAL CHECK (hold_max_s IS NULL OR hold_max_s > 0);
         """,
     ),
+    (
+        6,
+        # Settings changed from the dashboard (capacity limits after a load test).
+        """
+        CREATE TABLE app_settings (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        );
+        """,
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

@@ -7,6 +7,7 @@ import type { BulkResult, Stream, StreamGroup, User } from "../types/api";
 import { Avatar, ConfirmDialog, CopyButton, copyText, Pill, StatusBadge, useToast } from "./common";
 import { GoButton, leadText } from "./LeadIn";
 import { CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilmIcon, GridIcon, LockIcon, LoopIcon, MonitorIcon, PlayIcon, RestartIcon, SearchIcon, StopIcon, TrashIcon } from "./icons";
+import { useRtspAddress } from "../hooks/useRtspAddress";
 
 type Action = "start" | "stop" | "restart" | "delete";
 
@@ -17,6 +18,7 @@ export function canControl(s: Stream, user: User | null): boolean {
 }
 
 export function useStreamActions(onChanged: () => void) {
+  const addr = useRtspAddress();
   const toast = useToast();
   const [busy, setBusy] = useState<Record<number, boolean>>({});
   const [confirm, setConfirm] = useState<Stream | null>(null);
@@ -57,7 +59,7 @@ export function useStreamActions(onChanged: () => void) {
       title={`Delete ${confirm.name}?`} danger confirmLabel="Delete stream"
       message={<>
         The publisher stops and the stream configuration is removed. Cameras using{" "}
-        <span className="font-mono text-fg">{confirm.rtsp_url}</span> go offline.
+        <span className="font-mono text-fg">{addr.url(confirm.rtsp_url)}</span> go offline.
         {confirm.owner && confirm.owner !== "anonymous" && <> It was created by <b className="text-fg">{confirm.owner}</b>.</>} The source video file is <b className="text-fg">not</b> deleted.
       </>}
       onCancel={() => setConfirm(null)}
@@ -96,6 +98,7 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
   streams: Stream[]; user: User | null; onSelect: (s: Stream) => void; onChanged: () => void; mediamtxDown: boolean;
   groups?: StreamGroup[]; onGroupsChanged?: () => void; onClone?: (s: Stream) => void;
 }) {
+  const addr = useRtspAddress();
   const { request, busy, dialog } = useStreamActions(onChanged);
   const toast = useToast();
   const [query, setQuery] = useState("");
@@ -152,7 +155,7 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
   const copyGroupUrls = async () => {
     if (!group) return;
     try {
-      const text = await api.groupUrls(group.id);
+      const text = await api.groupUrls(group.id, addr.param);
       if (await copyText(text)) toast("ok", `Copied ${text.trim().split("\n").length} RTSP URLs.`);
     } catch (e) { toast("bad", (e as ApiError).message); }
   };
@@ -290,8 +293,8 @@ export function StreamsTable({ streams, user, onSelect, onChanged, mediamtxDown,
 
                 <div className="mt-3 flex items-center gap-2 rounded-lg bg-surface-2 px-2.5 py-1.5 ring-1 ring-inset ring-line"
                   onClick={(e) => e.stopPropagation()}>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title={s.rtsp_url}>{s.rtsp_url}</span>
-                  <CopyButton text={s.rtsp_url} label="Copy URL" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title={addr.url(s.rtsp_url)}>{addr.url(s.rtsp_url)}</span>
+                  <CopyButton text={addr.url(s.rtsp_url)} label="Copy URL" />
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted">

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import select
 
@@ -10,7 +10,8 @@ from ..schemas import EventOut, MessageOut
 from ..services.auth import User
 from ..services.ffprobe_service import ffmpeg_version
 from ..services.mediamtx_service import UP
-from .deps import Context, current_user, get_ctx, require_operator
+from ..services.network_info import interface_addresses
+from .deps import Context, current_user, get_ctx, request_rtsp_hosts, require_operator
 
 router = APIRouter(tags=["system"])
 
@@ -30,9 +31,9 @@ def health(strict: bool = False, ctx: Context = Depends(get_ctx)):
 
 
 @router.get("/api/config")
-def config(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
+def config(request: Request, ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
     s = ctx.settings
-    warnings = []
+    warnings = list(ctx.network.warnings()) if ctx.network else []
     if s.public_rtsp_host in ("localhost", "127.0.0.1", "::1"):
         warnings.append("RTSPM_PUBLIC_RTSP_HOST is not set: RTSP URLs show 'localhost', which other "
                         "machines cannot use. Set it to the server's fixed DNS name or IP.")
@@ -40,11 +41,13 @@ def config(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
         "version": __version__,
         "public_rtsp_host": s.public_rtsp_host,
         "public_rtsp_port": s.public_rtsp_port,
+        "rtsp_hosts": request_rtsp_hosts(request, ctx),
+        "server_addresses": ctx.network.addresses if ctx.network else interface_addresses(),
         "rtsp_url_template": s.public_rtsp_url("{name}"),
         "stream_name_pattern": s.stream_name_pattern,
         "reserved_names": s.reserved_names,
-        "max_active_streams": s.max_active_streams,
-        "max_transcode_streams": s.max_transcode_streams,
+        "max_active_streams": ctx.supervisor.max_active(),
+        "max_transcode_streams": ctx.supervisor.max_transcode(),
         "transcode_policy": s.transcode_policy,
         "copy_codecs": s.copy_codecs, "copy_pix_fmts": s.copy_pix_fmts, "copy_profiles": s.copy_profiles,
         "output_profile": {"codec": "h264", "encoder": "libx264", "profile": s.x264_profile,
@@ -72,11 +75,12 @@ def system(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
     running = [r for r in rows if r.status == StreamStatus.RUNNING]
     transcoding = [r for r in desired if r.output_mode == "transcode"]
     s_ = ctx.settings
+    cap, tcap = ctx.supervisor.max_active(), ctx.supervisor.max_transcode()
     warnings = ctx.sysmon.warnings()
-    if len(desired) >= s_.max_active_streams:
-        warnings.append(f"Stream capacity reached ({len(desired)}/{s_.max_active_streams}).")
-    elif len(desired) >= 0.8 * s_.max_active_streams:
-        warnings.append(f"Approaching stream capacity ({len(desired)}/{s_.max_active_streams}).")
+    if len(desired) >= cap:
+        warnings.append(f"Stream capacity reached ({len(desired)}/{cap}).")
+    elif len(desired) >= 0.8 * cap:
+        warnings.append(f"Approaching stream capacity ({len(desired)}/{cap}).")
     errors = [r.name for r in rows if r.status == StreamStatus.ERROR]
     ingest_bps, egress_bps = ctx.mediamtx.total_bps(names) if ctx.mediamtx.state == UP else (None, None)
     if egress_bps and egress_bps / 1e6 >= s_.net_warn_mbps:
@@ -87,9 +91,9 @@ def system(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
         "streams": {
             "total": len(rows), "desired_running": len(desired), "running": len(running),
             "errors": len(errors), "error_names": errors,
-            "transcoding": len(transcoding), "max_active": s_.max_active_streams,
-            "max_transcode": s_.max_transcode_streams,
-            "capacity_percent": round(len(desired) / s_.max_active_streams * 100) if s_.max_active_streams else None,
+            "transcoding": len(transcoding), "max_active": cap,
+            "max_transcode": tcap,
+            "capacity_percent": round(len(desired) / cap * 100) if cap else None,
         },
         "start_queue": {"spacing_s": s_.start_spacing_s, "ready_wait_s": s_.start_ready_wait_s,
                         "phase_margin_s": s_.start_phase_margin_s, "queued": ctx.supervisor.gate.pending(),

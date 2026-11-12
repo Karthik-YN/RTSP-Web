@@ -1,7 +1,5 @@
 import type {
-  AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, RunResult,
-  AppConfig, BulkResult, StreamGroup, StreamHistory, AppEvent, MediaMTXStatus, Stream, StreamDetail, SystemInfo, UploadCheck, User,
-  ValidateResult, Video, LeadInMode,
+  AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, HealthReport, LeadInMode, MediaMTXStatus, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
 } from "../types/api";
 
 /** Error carrying the server's message (FastAPI `detail`) and extra fields. */
@@ -32,6 +30,32 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn;
 }
 
+/**
+ * Behind Cloudflare Access an expired sign-in turns every API call into a
+ * redirect to the Cloudflare login page, which fetch() reports as a network
+ * error. Detect that (a same-origin request answered with a redirect) and
+ * reload once, so the browser shows the sign-in page instead of "offline".
+ */
+export async function accessSessionExpired(): Promise<boolean> {
+  try {
+    const r = await fetch("/api/health", { credentials: "same-origin", redirect: "manual", cache: "no-store" });
+    return r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400);
+  } catch {
+    return false;
+  }
+}
+
+const RELOAD_KEY = "rig02.access.reload";
+
+async function reloadIfSignInExpired(): Promise<void> {
+  if (!(await accessSessionExpired())) return;
+  let last = 0;
+  try { last = Number(sessionStorage.getItem(RELOAD_KEY) || 0); } catch { /* storage blocked */ }
+  if (Date.now() - last < 30_000) return; // never loop
+  try { sessionStorage.setItem(RELOAD_KEY, String(Date.now())); } catch { /* storage blocked */ }
+  window.location.reload();
+}
+
 async function request<T>(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   let res: Response;
   try {
@@ -42,6 +66,7 @@ async function request<T>(method: string, url: string, body?: unknown, headers: 
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
+    void reloadIfSignInExpired();
     throw new ApiError(0, "Cannot reach the server. Check the network connection.");
   }
   if (res.status === 204) return undefined as T;
@@ -110,6 +135,12 @@ export interface StreamMetaInput {
 
 export const api = {
   me: () => request<User>("GET", "/api/auth/me"),
+  healthTest: (quick = false) => request<HealthReport>("POST", `/api/health/test${quick ? "?quick=true" : ""}`),
+  lastHealth: () => request<{ full: HealthReport | null; quick: HealthReport | null; auto_interval_s: number }>("GET", "/api/health/test/last"),
+  capacity: () => request<Capacity>("GET", "/api/settings/capacity"),
+  setCapacity: (body: { max_active_streams?: number; max_transcode_streams?: number; reset?: string[] }) =>
+    request<Capacity>("PUT", "/api/settings/capacity", body),
+  backupNow: () => request<{ message: string; name: string }>("POST", "/api/backup"),
   login: (username: string, password: string) => request<User>("POST", "/api/auth/login", { username, password }),
   logout: () => request<void>("POST", "/api/auth/logout"),
   changePassword: (current_password: string, new_password: string) =>
@@ -152,8 +183,8 @@ export const api = {
     request<{ updated: number }>("POST", "/api/groups/members", { stream_ids, group_id }),
   deleteGroup: (id: number) => request<void>("DELETE", `/api/groups/${id}`),
   groupAction: (id: number, action: "start" | "stop" | "restart") => request<BulkResult>("POST", `/api/groups/${id}/${action}`),
-  groupUrls: async (id: number) => {
-    const r = await fetch(`/api/groups/${id}/urls`, { credentials: "same-origin" });
+  groupUrls: async (id: number, host?: string) => {
+    const r = await fetch(`/api/groups/${id}/urls${host ? `?host=${encodeURIComponent(host)}` : ""}`, { credentials: "same-origin" });
     if (!r.ok) throw new ApiError(r.status, "Could not load the group's URLs.");
     return r.text();
   },
@@ -170,8 +201,8 @@ export const api = {
   createCategory: (name: string) => request<{ id: number }>("POST", "/api/analytics/categories", { name }),
   analyticsAction: (id: number, action: "start" | "stop" | "restart") =>
     request<BulkResult>("POST", `/api/analytics/${id}/${action}`),
-  analyticsUrls: (id: number, format: "txt" | "csv" = "txt") =>
-    text(`/api/analytics/${id}/urls?format=${format}`, "the RTSP URLs"),
+  analyticsUrls: (id: number, format: "txt" | "csv" = "txt", host?: string) =>
+    text(`/api/analytics/${id}/urls?format=${format}${host ? `&host=${encodeURIComponent(host)}` : ""}`, "the RTSP URLs"),
   createSlot: (analyticsId: number, body: { title: string; description?: string | null; video_id?: number | null }) =>
     request<AnalyticsSlot>("POST", `/api/analytics/${analyticsId}/slots`, body),
   updateSlot: (id: number, body: { title?: string; description?: string; video_id?: number; clear_video?: boolean }) =>
