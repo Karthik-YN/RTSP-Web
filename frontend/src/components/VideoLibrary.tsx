@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
-import { formatBytes, formatTime } from "../lib/format";
-import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, User, Video } from "../types/api";
+import { formatBytes, formatDuration, formatTime } from "../lib/format";
+import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, PreviewConfig, User, Video } from "../types/api";
 import { useRig } from "../hooks/useRigData";
 import { SHAPE_TEXT } from "./CreateStreamDialog";
 import { ConfirmDialog, ErrorBox, Modal, Pill, Spinner, useToast } from "./common";
@@ -13,7 +13,7 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
   onCreateStream: (videoId: number) => void; search: string; setSearch: (s: string) => void;
 }) {
   const toast = useToast();
-  const out = useRig().config.output;
+  const { output: out, preview } = useRig().config;
   const [refreshing, setRefreshing] = useState(false);
   const [fitting, setFitting] = useState<Video | null>(null);
 
@@ -71,7 +71,7 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
         {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
           onCreateStream={onCreateStream} onDelete={setDeleting} job={conv.activeFor(v.id)}
-          onConvert={conv.start} onCancel={conv.cancel} out={out} onFit={setFitting} />)}
+          onConvert={conv.start} onCancel={conv.cancel} out={out} onFit={setFitting} preview={preview} />)}
       </div>
 
       {fitting && <FitDialog v={fitting} out={out} onClose={() => setFitting(null)}
@@ -191,8 +191,33 @@ export function ConversionProgress({ job, onCancel }: { job: Conversion; onCance
   );
 }
 
-/** Plays the file in the browser; for formats browsers can't play, offers the H.264 copy or a download. */
-export function VideoPlayer({ v, onClose, onConvert, job }: {
+/** Short clip of a long video (made and cached by the server). */
+export function previewUrl(id: number, start = 0): string {
+  return `/api/videos/${id}/preview${start > 0 ? `?start=${start}` : ""}`;
+}
+
+/** Where a preview can start: the beginning, then a quarter, half and three quarters in (whole minutes). */
+export function previewStarts(duration: number, clip: number): number[] {
+  const last = Math.max(0, duration - clip);
+  const out = [0, 0.25, 0.5, 0.75].map((f) => Math.min(last, Math.floor((duration * f) / 60) * 60));
+  return [...new Set(out)];
+}
+
+/**
+ * Plays the file in the browser. Long videos play a short preview clip instead of the
+ * whole file; formats browsers can't play get the H.264 copy offer; Download is always there.
+ */
+export function VideoPlayer({ v, onClose, onConvert, job, preview }: {
+  v: Video; onClose: () => void; onConvert?: () => Promise<string | null> | void; job?: Conversion;
+  preview?: PreviewConfig;
+}) {
+  if (preview && (v.duration_s ?? 0) > preview.threshold_s) {
+    return <PreviewPlayer v={v} clip={preview.seconds} onClose={onClose} />;
+  }
+  return <FilePlayer v={v} onClose={onClose} onConvert={onConvert} job={job} />;
+}
+
+function FilePlayer({ v, onClose, onConvert, job }: {
   v: Video; onClose: () => void; onConvert?: () => Promise<string | null> | void; job?: Conversion;
 }) {
   const [failed, setFailed] = useState(false);
@@ -235,10 +260,10 @@ export function VideoPlayer({ v, onClose, onConvert, job }: {
 }
 
 /** Memoised: the library re-renders on every poll, a card only when its own video or job changes. */
-const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit }: {
+const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit, preview }: {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
   job?: Conversion; onConvert: (v: Video, opts?: { profile: ConvertProfile; fit?: ConvertFit }) => Promise<string | null>;
-  onCancel: (j: Conversion) => void; out?: OutputConfig; onFit: (v: Video) => void;
+  onCancel: (j: Conversion) => void; out?: OutputConfig; onFit: (v: Video) => void; preview?: PreviewConfig;
 }) {
   const onConvert = () => convertVideo(v);
   const notWide = v.is_16_9 === false;
@@ -328,7 +353,7 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
           )}
         </div>
       </div>
-      {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} job={job}
+      {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} job={job} preview={preview}
         onConvert={canWrite && reasons.length > 0 ? onConvert : undefined} />}
     </div>
   );
@@ -371,6 +396,45 @@ export function FitDialog({ v, out, onClose, onStart }: {
             {busy ? <Spinner /> : <RefreshIcon />} Make 16:9 copy
           </button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+function PreviewPlayer({ v, clip, onClose }: { v: Video; clip: number; onClose: () => void }) {
+  const duration = v.duration_s ?? 0;
+  const starts = previewStarts(duration, clip);
+  const [start, setStart] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const pick = (s: number) => { if (s !== start) { setStart(s); setLoading(true); setFailed(false); } };
+  return (
+    <Modal title={v.filename} wide onClose={onClose}>
+      <p className="mb-2 text-sm text-muted" data-testid="preview-label">
+        Preview: {formatDuration(clip)} from {formatTime(start, false)} of a {formatDuration(duration)} video.
+        Download it for the full length.
+      </p>
+      <div className="relative">
+        <video key={start} data-testid="video-player" className="max-h-[70vh] w-full rounded bg-black" src={previewUrl(v.id, start)}
+          controls autoPlay playsInline preload="auto" onLoadedData={() => setLoading(false)}
+          onError={() => { setLoading(false); setFailed(true); }} />
+        {loading && !failed && (
+          <div className="absolute inset-0 flex items-center justify-center gap-2 rounded bg-black/60 text-sm text-white">
+            <Spinner /> Preparing the preview (first time only, a few seconds)…
+          </div>
+        )}
+      </div>
+      {failed && <div className="mt-2"><ErrorBox>The preview could not be made. Download the video to watch it.</ErrorBox></div>}
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted">Start the preview at</span>
+        {starts.map((s) => (
+          <button key={s} className={s === start ? "btn-primary btn-xs" : "btn-secondary btn-xs"} onClick={() => pick(s)}
+            aria-pressed={s === start}>{formatTime(s, false)}</button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}</span>
+        <a className="btn-secondary" href={videoFileUrl(v.id, true)} download={v.filename}><DownloadIcon /> Download full video</a>
       </div>
     </Modal>
   );

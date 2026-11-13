@@ -250,6 +250,24 @@ def video_file(video_id: int, download: bool = Query(default=False), ctx: Contex
                         headers={"Cache-Control": "private, max-age=3600"})
 
 
+@router.get("/{video_id}/preview")
+async def video_preview(video_id: int, start: float = Query(default=0, ge=0), ctx: Context = Depends(get_ctx),
+                        _: User = Depends(current_user)):
+    """A short H.264 clip (``RTSPM_PREVIEW_SECONDS``, up to 720p) from ``start`` seconds, for playing
+    long videos in the browser. Made on first request (a few seconds), then cached.
+    The clip's real start is in the ``X-Preview-Start`` header."""
+    v = _get(ctx, video_id)
+    if v.status != "READY":
+        raise HTTPException(409, f"'{v.rel_path}' is not ready: {v.error or v.status}.")
+    try:
+        path, at = await ctx.library.previews.get(v, start)
+    except LibraryError as exc:
+        raise _lib_error(exc)
+    return FileResponse(path, media_type="video/mp4", content_disposition_type="inline",
+                        filename=f"{PurePosixPath(v.rel_path).stem} (preview).mp4",
+                        headers={"Cache-Control": "private, max-age=3600", "X-Preview-Start": str(at)})
+
+
 @router.get("/{video_id}/frame")
 async def frame(video_id: int, t: float = Query(ge=0), ctx: Context = Depends(get_ctx),
                 _: User = Depends(current_user)):

@@ -40,7 +40,9 @@ class VideoLibrary:
         self.last_scan_summary: dict = {}
         self._sessions: dict[str, dict] = {}
         from .converter import Converter
+        from .preview import PreviewCache
         self.converter = Converter(self)
+        self.previews = PreviewCache(self)
 
     # ---------------------------------------------------------- compat
     def compat_for(self, meta: dict, force_transcode: bool = False) -> compatibility.CompatResult:
@@ -419,6 +421,7 @@ class VideoLibrary:
         if thumb:
             with contextlib.suppress(OSError):
                 (self.s.thumbnail_path / thumb).unlink()
+        self.previews.forget(video_id)
         self.events.add("video.deleted", f"{v.rel_path} moved to .trash/{dst.name} (kept {self.s.trash_days:g} days)",
                         username=username, level="WARNING")
         return dst.name

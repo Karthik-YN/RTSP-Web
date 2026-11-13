@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConversionProgress, FitDialog, VideoPlayer, videoFileUrl } from "./VideoLibrary";
+import { ConversionProgress, FitDialog, previewStarts, VideoPlayer, videoFileUrl } from "./VideoLibrary";
 import { blockedShape, OutputSizeField, outputPlan } from "./CreateStreamDialog";
 import type { Conversion, Video } from "../types/api";
 
@@ -96,5 +96,29 @@ describe("16:9 and standard output", () => {
     await user.click(screen.getByLabelText(/Crop to fill/));
     await user.click(screen.getByRole("button", { name: /Make 16:9 copy/ }));
     expect(onStart).toHaveBeenCalledWith("crop");
+  });
+});
+
+describe("long-video preview", () => {
+  const long = { ...video, duration_s: 2 * 3600 + 5 * 60 } as Video;
+  const preview = { threshold_s: 3600, seconds: 120 };
+
+  it("offers start points every quarter, in whole minutes", () => {
+    expect(previewStarts(7500, 120)).toEqual([0, 1860, 3720, 5580]);
+    expect(previewStarts(100, 120)).toEqual([0]);
+  });
+
+  it("plays a short preview of a long video, not the whole file", async () => {
+    render(<VideoPlayer v={long} onClose={() => {}} preview={preview} />);
+    expect(screen.getByTestId("preview-label")).toHaveTextContent("Preview: 2m 0s from 00:00:00 of a 2h 5m video");
+    expect(screen.getByTestId("video-player")).toHaveAttribute("src", "/api/videos/7/preview");
+    await userEvent.setup().click(screen.getByRole("button", { name: "01:02:00" }));
+    expect(screen.getByTestId("video-player")).toHaveAttribute("src", "/api/videos/7/preview?start=3720");
+    expect(screen.getByRole("link", { name: /Download full video/ })).toHaveAttribute("href", "/api/videos/7/file?download=true");
+  });
+
+  it("plays short videos in full", () => {
+    render(<VideoPlayer v={video} onClose={() => {}} preview={preview} />);
+    expect(screen.getByTestId("video-player")).toHaveAttribute("src", "/api/videos/7/file");
   });
 });

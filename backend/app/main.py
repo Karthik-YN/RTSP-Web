@@ -232,7 +232,7 @@ class _SelectiveGZip:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        if scope["type"] == "http" and "/live/" not in path and not path.endswith("/file"):
+        if scope["type"] == "http" and "/live/" not in path and not path.endswith(("/file", "/preview")):
             await self.gzip(scope, receive, send)
         else:
             await self.app(scope, receive, send)

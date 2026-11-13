@@ -295,6 +295,13 @@ export interface AppConfig {
   default_lead_in_mode?: LeadInMode;
   default_lead_in_s?: number;
   output?: OutputConfig;
+  /** Videos longer than threshold_s play a `seconds`-long preview clip in the library. */
+  preview?: PreviewConfig;
+}
+
+export interface PreviewConfig {
+  threshold_s: number;
+  seconds: number;
 }
 
 /** Standard stream size (16:9) and the sizes admins may pick. */

@@ -206,6 +206,11 @@ class Settings(BaseSettings):
     upload_chunk_bytes: int = 1024 * 1024
     upload_session_idle_s: float = 3600.0  # resumable upload sessions expire after this idle time
     trash_days: float = 7.0  # deleted videos stay in <video_dir>/.trash this long
+    # Library player: videos longer than this play a short preview clip, not the whole file.
+    preview_threshold_s: float = Field(default=3600.0, ge=0)
+    preview_seconds: int = Field(default=120, ge=10, le=900)
+    preview_cache_bytes: int = 5 * 1024**3  # least recently used clips are removed above this
+    preview_dir: Path | None = None  # default: <data_dir>/previews
 
     # ------------------------------------------------------------------ auth
     # Off: direct access for everyone on the network, no login. On: users, roles, protected streams.
@@ -240,6 +245,10 @@ class Settings(BaseSettings):
     @property
     def backup_path(self) -> Path:
         return self.backup_dir or self.data_dir / "backups"
+
+    @property
+    def preview_path(self) -> Path:
+        return self.preview_dir or self.data_dir / "previews"
 
     @property
     def slate_path(self) -> Path:

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { StreamStatus } from "../types/api";
 
 // ------------------------------------------------------------------ Modal
@@ -10,7 +11,9 @@ export function Modal({ title, onClose, children, wide = false }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  // Rendered at the end of <body>: a dialog opened from inside a card must not be clipped or
+  // positioned by the card (cards use content-visibility, which contains fixed children).
+  return createPortal(
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/50 p-4 pt-12 backdrop-blur-sm"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div role="dialog" aria-label={title}
@@ -21,7 +24,8 @@ export function Modal({ title, onClose, children, wide = false }: {
         </div>
         <div className="p-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
