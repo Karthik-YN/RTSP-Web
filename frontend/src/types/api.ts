@@ -82,6 +82,8 @@ export interface Stream {
   playback_speed: number;
   force_transcode: boolean;
   output_mode: "copy" | "transcode" | null;
+  output_size?: string;
+  output_resolution?: string | null;
   desired_state: "RUNNING" | "STOPPED";
   status: StreamStatus;
   lead_in_mode: LeadInMode;
@@ -139,6 +141,15 @@ export interface Video {
   /** Why "Convert to H.264" would help; empty when it would not. */
   convert_reasons?: string[];
   converting?: Conversion | null;
+  /** Size as shown (rotation and non-square pixels applied) and its shape. */
+  display_width?: number | null;
+  display_height?: number | null;
+  shape?: "16:9" | "portrait" | "4:3" | "square" | "other" | null;
+  is_16_9?: boolean | null;
+  /** The ready "(720p)" copy of this video, if one exists. */
+  copy_720p_id?: number | null;
+  /** The ready "(720p 16x9)" copy of a video that is not 16:9, if one exists. */
+  copy_16x9_id?: number | null;
   thumbnail_url: string | null;
   streams_using: number;
   updated_at: string;
@@ -283,6 +294,16 @@ export interface AppConfig {
   warnings: string[];
   default_lead_in_mode?: LeadInMode;
   default_lead_in_s?: number;
+  output?: OutputConfig;
+}
+
+/** Standard stream size (16:9) and the sizes admins may pick. */
+export interface OutputConfig {
+  width: number;
+  height: number;
+  default: "standard" | "original";
+  sizes: string[];
+  require_16_9: boolean;
 }
 
 export interface User {
@@ -390,6 +411,9 @@ export interface RunResult {
   skipped: string[];
 }
 
+export type ConvertProfile = "h264" | "720p" | "16x9";
+export type ConvertFit = "blur" | "pad" | "crop";
+
 export interface Conversion {
   id: string;
   video_id: number;
@@ -401,6 +425,9 @@ export interface Conversion {
   error: string | null;
   result_video_id: number | null;
   username: string | null;
+  profile?: ConvertProfile;
+  fit?: ConvertFit | null;
+  label?: string;
   created_at: string;
   finished_at: string | null;
 }

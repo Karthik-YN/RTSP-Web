@@ -12,7 +12,7 @@ import {
 import { isVideoFile, useUploads } from "../components/UploadQueue";
 import { queueText } from "../components/StreamsTable";
 import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
-import { FastStartNotice } from "../components/CreateStreamDialog";
+import { blockedShape, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
 import {
   CameraIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, PlusIcon, SearchIcon, StopIcon,
   TrashIcon, UploadIcon,
@@ -504,7 +504,8 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
   slot: AnalyticsSlot; video: Video; analyticsName: string; onClose: () => void; onDone: () => void;
 }) {
   const addr = useRtspAddress();
-  const { streams, system, config } = useRig();
+  const { streams, system, config, user } = useRig();
+  const [outputSize, setOutputSize] = useState<string>(config?.output?.default ?? "original");
   const [countText, setCountText] = useState("1");
   const [lead, setLead] = useState<LeadInValue>({
     mode: config?.default_lead_in_mode ?? "fixed", seconds: config?.default_lead_in_s ?? 5, holdMax: null });
@@ -536,7 +537,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
     setErr(null);
     try {
       const r = await api.runSlot(slot.id, { count, name_prefix: prefix, start: start.trim() || null, end: end.trim() || null,
-        mode, start_now: startNow, force_transcode: fastStart, ...leadInBody(lead) });
+        mode, start_now: startNow, force_transcode: fastStart, output_size: outputSize, ...leadInBody(lead) });
       setResult(r);
       onDone();
     } catch (e) {
@@ -622,7 +623,14 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
           <span className="label">Lead-in (before the video)</span>
           <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
         </div>
-        <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />
+        {blockedShape(video, config?.output) && (
+          <WarnBox>This video is {SHAPE_TEXT[video.shape ?? "other"]}, not 16:9, so it can't be streamed. Make a 16:9 copy
+            in the Video library (blurred bars, black bars or crop) and choose the copy for this placeholder.</WarnBox>
+        )}
+        <OutputSizeField out={config?.output} video={video} value={outputSize} onChange={setOutputSize}
+          isAdmin={!!user?.is_admin} idPrefix="run" />
+        {outputPlan(video, outputSize, config?.output) !== "live" &&
+          <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />}
         <div>
           <div className="label">Streams to create</div>
           <div className="flex flex-wrap gap-1">

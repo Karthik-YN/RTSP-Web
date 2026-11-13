@@ -54,6 +54,8 @@ def config(request: Request, ctx: Context = Depends(get_ctx), _: User = Depends(
                            "preset": s.x264_preset, "gop_seconds": s.x264_gop_seconds,
                            "max": f"{s.transcode_max_width}x{s.transcode_max_height}",
                            "fps_mode": s.output_fps_mode},
+        "output": {"width": s.output_width, "height": s.output_height, "default": s.output_default,
+                   "sizes": s.standard_sizes, "require_16_9": s.require_16_9},
         "min_segment_s": s.min_segment_s,
         "allowed_extensions": s.allowed_extensions,
         "upload_max_bytes": s.upload_max_bytes,

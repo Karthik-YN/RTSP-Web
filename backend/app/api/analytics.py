@@ -81,6 +81,8 @@ class RunIn(BaseModel):
     end: TimeValue = None
     mode: Literal["loop", "once"] = "loop"
     force_transcode: bool = False
+    output_size: str | None = Field(default=None, max_length=20,
+                                    description="standard, original or WxH (default: RTSPM_OUTPUT_DEFAULT)")
     start_now: bool = True
     lead_in_mode: Literal["none", "fixed", "hold"] | None = None
     lead_in_s: float | None = Field(default=None, ge=0, le=120)
@@ -256,7 +258,8 @@ async def run_slot(sid: int, body: RunIn, ctx: Context = Depends(get_ctx), user:
         taken = set(s.scalars(select(Stream.name)))
     names = next_names(prefix, taken, body.count)
     cfg = _cfg(SimpleNamespace(start=body.start, end=body.end, video_id=video_id, mode=body.mode,
-                               force_transcode=body.force_transcode))
+                               force_transcode=body.force_transcode, output_size=body.output_size),
+               default_output=ctx.settings.output_default)
     created, errors = [], []
     for name in names:
         try:

@@ -3,7 +3,9 @@ from __future__ import annotations
 import mimetypes
 from pathlib import PurePosixPath
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from typing import Literal
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from starlette.requests import ClientDisconnect
@@ -11,7 +13,10 @@ from starlette.requests import ClientDisconnect
 from ..models import Stream, Video
 from ..schemas import ScanOut, UploadCheckIn, UploadCheckOut, VideoOut
 from ..services.auth import User
-from ..services.converter import browser_playback, convert_reasons
+from pydantic import BaseModel
+
+from ..services.converter import browser_playback, convert_reasons, target_rel
+from ..services.shape import video_shape
 from ..services.ffprobe_service import ProbeError
 from ..services.file_manager import LibraryError
 from .deps import Context, current_user, get_ctx, require_admin, require_operator
@@ -19,7 +24,14 @@ from .deps import Context, current_user, get_ctx, require_admin, require_operato
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
-def video_out(v: Video, streams_using: int = 0, converter=None) -> VideoOut:
+def _copies_720p(s) -> dict[str, int]:
+    """rel_path -> id of every ready "(720p)" and "(720p 16x9)" copy."""
+    rows = s.execute(select(Video.rel_path, Video.id).where(
+        Video.rel_path.like("% (720p%).mp4"), Video.status == "READY")).all()
+    return dict(rows)
+
+
+def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str, int] | None = None) -> VideoOut:
     playable, note = browser_playback(v)
     job = converter.active_for(v.id) if converter is not None else None
     return VideoOut(
@@ -33,6 +45,8 @@ def video_out(v: Video, streams_using: int = 0, converter=None) -> VideoOut:
         streams_using=streams_using, updated_at=v.updated_at, last_seen_at=v.last_seen_at,
         browser_playable=playable, browser_note=note, convert_reasons=convert_reasons(v),
         converting=job.view() if job else None,
+        **video_shape(v), copy_720p_id=(copies or {}).get(target_rel(v.rel_path, "720p")),
+        copy_16x9_id=(copies or {}).get(target_rel(v.rel_path, "16x9")),
     )
 
 
@@ -58,7 +72,8 @@ def list_videos(search: str | None = Query(default=None, max_length=200),
             q = q.where(Video.status != "MISSING")
         videos = list(s.scalars(q))
         usage = dict(s.execute(select(Stream.video_id, func.count()).group_by(Stream.video_id)).all())
-    return [video_out(v, usage.get(v.id, 0), ctx.library.converter) for v in videos]
+        copies = _copies_720p(s)
+    return [video_out(v, usage.get(v.id, 0), ctx.library.converter, copies) for v in videos]
 
 
 @router.post("/refresh", response_model=ScanOut)
@@ -161,13 +176,26 @@ async def cancel_conversion(job_id: str, ctx: Context = Depends(get_ctx), _: Use
     return job.view()
 
 
+class ConvertIn(BaseModel):
+    profile: Literal["h264", "720p", "16x9"] = "h264"
+    fit: Literal["blur", "pad", "crop"] = "blur"
+
+
 @router.post("/{video_id}/convert", status_code=202)
-async def convert_video(video_id: int, ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
-    """Make a universal H.264 copy, ``<name> (h264).mp4``, next to the original (which is kept):
-    plays in every browser, streams without live transcoding, first picture within 2 s.
-    Runs in the background; follow it with ``GET /api/videos/conversions``."""
+async def convert_video(video_id: int, body: ConvertIn | None = Body(default=None),
+                        ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
+    """Make a copy next to the original (which is kept). Runs in the background; follow it
+    with ``GET /api/videos/conversions``.
+
+    * ``h264`` (default): ``<name> (h264).mp4``, plays in every browser, streams without live
+      transcoding, first picture within 2 s.
+    * ``720p``: a 16:9 video at the standard size, ``<name> (720p).mp4``; "Standard" streams use it.
+    * ``16x9``: any other shape fitted into the standard 16:9 frame, ``<name> (720p 16x9).mp4``,
+      with ``fit`` = blur (blurred bars), pad (black bars) or crop (fill, cut the overflow).
+    """
+    body = body or ConvertIn()
     try:
-        job = ctx.library.converter.start(video_id, user.username)
+        job = ctx.library.converter.start(video_id, user.username, body.profile, body.fit)
     except LibraryError as exc:
         raise _lib_error(exc)
     return job.view()
@@ -188,7 +216,8 @@ def get_video(video_id: int, ctx: Context = Depends(get_ctx), _: User = Depends(
     v = _get(ctx, video_id)
     with ctx.db.session() as s:
         n = s.scalar(select(func.count()).select_from(Stream).where(Stream.video_id == video_id)) or 0
-    return video_out(v, n, ctx.library.converter)
+        copies = _copies_720p(s)
+    return video_out(v, n, ctx.library.converter, copies)
 
 
 @router.get("/{video_id}/thumbnail")

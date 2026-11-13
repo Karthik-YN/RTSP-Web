@@ -42,6 +42,7 @@ from pathlib import Path
 import psutil
 
 from ..config import Settings
+from .shape import fit_filter
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +68,8 @@ class PublishPlan:
     fps: float | None = None
     width: int | None = None
     height: int | None = None
+    out_width: int | None = None  # scale to exactly this size (standard output); None = keep
+    out_height: int | None = None
     entries: int = 1
 
     @property
@@ -152,7 +155,9 @@ def transcode_args(plan: PublishPlan, settings: Settings) -> list[str]:
     if settings.x264_threads > 0:
         args += ["-threads", str(settings.x264_threads)]
     w, h = plan.width or 0, plan.height or 0
-    if w > settings.transcode_max_width or h > settings.transcode_max_height:
+    if plan.out_width and plan.out_height:
+        args += ["-vf", fit_filter(plan.out_width, plan.out_height, "pad")]
+    elif w > settings.transcode_max_width or h > settings.transcode_max_height:
         args += ["-vf", (f"scale=w={settings.transcode_max_width}:h={settings.transcode_max_height}"
                          ":force_original_aspect_ratio=decrease:force_divisible_by=2")]
     if settings.output_fps_mode == "cfr":

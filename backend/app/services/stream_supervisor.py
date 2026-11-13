@@ -43,6 +43,7 @@ from .ffprobe_service import ProbeError, keyframe_at_or_before, video_end_time
 from .file_manager import LibraryError, describe_change, fingerprint, public_error
 from .mediamtx_service import DOWN, UP, MediaMTXService
 from .runtime_settings import RuntimeSettings
+from .shape import SHAPE_LABEL, parse_size, video_shape
 from .slate_service import SlateService, SlateSpec, fps_text_of, profile_of
 from .start_gate import StartGate, Ticket, phase_delay
 from .validation import ValidationError, validate_segment, validate_stream_name
@@ -62,6 +63,10 @@ class StreamConfig:
     end_s: float | None = None
     mode: str = "loop"
     force_transcode: bool = False
+    # "standard" (RTSPM_OUTPUT_WIDTH x HEIGHT), "original", or "WxH" from RTSPM_STANDARD_SIZES
+    output_size: str = "original"
+    # New streams and video changes must be 16:9; restarting an existing stream is not refused.
+    enforce_shape: bool = True
 
 
 @dataclass
@@ -218,6 +223,43 @@ class StreamSupervisor:
         return self.limits.get_int("max_transcode_streams")
 
     # ================================================================ config
+    def _output_for(self, video: Video, choice: str,
+                    enforce_shape: bool = True) -> tuple[Video, tuple[int, int] | None, list[str]]:
+        """Apply the 16:9 rule and the output size.
+
+        Returns (video to stream, size to scale to or None for as-is, notes).
+        With "standard", a ready 720p copy of the video is used instead when one
+        exists, so the stream runs in copy mode.
+        """
+        from .converter import target_rel  # local: converter imports the library module
+
+        shape = video_shape(video)
+        if enforce_shape and self.s.require_16_9 and shape["is_16_9"] is False:
+            raise Invalid(
+                f"'{video.rel_path}' is {SHAPE_LABEL[shape['shape']]} ({shape['display_width']}x"
+                f"{shape['display_height']}), not 16:9. Streams must be 16:9: make a 16:9 copy in the library "
+                "first (blurred bars, black bars or crop). The original stays in the library.",
+                {"field": "video_id", "shape": shape["shape"]})
+        if choice in (None, "", "original"):
+            return video, None, []
+        if choice == "standard":
+            size = (self.s.output_width, self.s.output_height)
+        else:
+            size = parse_size(choice)
+            allowed = {parse_size(x) for x in self.s.standard_sizes} | {(self.s.output_width, self.s.output_height)}
+            if size is None or size not in allowed:
+                raise Invalid(f"Output size '{choice}' is not allowed (use standard, original or one of "
+                              f"{', '.join(self.s.standard_sizes)}).", {"field": "output_size"})
+        if (shape["display_width"], shape["display_height"]) == size:
+            return video, None, []
+        if size == (self.s.output_width, self.s.output_height):
+            with self.db.session() as s:
+                copy = s.scalar(select(Video).where(Video.rel_path == target_rel(video.rel_path, "720p"),
+                                                    Video.status == VideoStatus.READY))
+            if copy is not None and (copy.width, copy.height) == size:
+                return copy, None, [f"Uses the {size[1]}p copy '{copy.rel_path}' (no live transcoding)."]
+        return video, size, []
+
     async def prepare(self, cfg: StreamConfig) -> dict:
         """Validate a stream configuration against the current file.
 
@@ -232,6 +274,8 @@ class StreamSupervisor:
         if video.status != VideoStatus.READY:
             raise Invalid(f"Video '{video.rel_path}' is not usable: {video.error or video.status}.",
                           {"field": "video_id"})
+        video, out_size, notes = self._output_for(video, cfg.output_size, cfg.enforce_shape)
+        cfg.video_id = video.id  # may now be the 720p copy (re-reads below must use it)
         try:
             path = self.library.lib.resolve(video.rel_path)
             try:
@@ -263,7 +307,11 @@ class StreamSupervisor:
             seg = validate_segment(cfg.start_s, cfg.end_s, video.duration_s, self.s.min_segment_s)
         except ValidationError as exc:
             raise Invalid(str(exc), {"field": exc.field})
-        compat = self.library.compat_for(self.library.meta_of(video), cfg.force_transcode)
+        compat = self.library.compat_for(self.library.meta_of(video), cfg.force_transcode or out_size is not None)
+        if out_size is not None and compat.mode == compatibility.TRANSCODE:
+            compat.warnings.append(f"Scaled to {out_size[0]}x{out_size[1]} live (costs CPU). Make a 720p copy in the "
+                                   "library to stream it without transcoding.")
+        compat.warnings[:0] = notes
         if compat.mode == compatibility.REJECT:
             raise Invalid("This video cannot be published: " + " ".join(compat.reasons),
                           {"field": "video_id", "reasons": compat.reasons})
@@ -312,6 +360,9 @@ class StreamSupervisor:
             "force_transcode": bool(cfg.force_transcode),
             "output_mode": compat.mode,
             "config_json": {
+                "output_size": cfg.output_size,
+                "out_width": out_size[0] if out_size else None,
+                "out_height": out_size[1] if out_size else None,
                 "compat_reasons": compat.reasons,
                 "compat_warnings": compat.warnings,
                 "container_start_time_s": start_time,
@@ -521,7 +572,8 @@ class StreamSupervisor:
         try:
             fields = await self.prepare(StreamConfig(
                 video_id=row.video_id, start_s=row.start_offset_s, end_s=row.end_offset_s,
-                mode=row.playback_mode, force_transcode=bool(row.force_transcode)))
+                mode=row.playback_mode, force_transcode=bool(row.force_transcode),
+                output_size=(row.config_json or {}).get("output_size") or "original", enforce_shape=False))
         except Invalid as exc:
             self._update(row.id, status=StreamStatus.ERROR, last_error=exc.message)
             raise
@@ -733,6 +785,7 @@ class StreamSupervisor:
             publish_url=self.s.publish_url(row.name),
             playlist_path=self.s.run_path / "streams" / str(row.id) / "playlist.ffconcat",
             fps=cfg.get("fps"), width=cfg.get("width"), height=cfg.get("height"),
+            out_width=cfg.get("out_width"), out_height=cfg.get("out_height"),
         )
         plan.entries = loop_entries(plan.period_s, self.s) if row.playback_mode == "loop" else 1
         return plan

@@ -1,5 +1,7 @@
 import type {
   Conversion,
+  ConvertFit,
+  ConvertProfile,
   AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, HealthReport, LeadInMode, MediaMTXStatus, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
 } from "../types/api";
 
@@ -96,6 +98,7 @@ export interface StreamInput {
   end: string | null;
   mode: "loop" | "once";
   force_transcode: boolean;
+  output_size?: string;
   start_now?: boolean;
   note?: string | null;
   protected?: boolean;
@@ -112,6 +115,7 @@ export interface RunInput {
   end: string | null;
   mode: "loop" | "once";
   force_transcode?: boolean;
+  output_size?: string;
   start_now?: boolean;
   lead_in_mode?: LeadInMode;
   lead_in_s?: number;
@@ -192,7 +196,8 @@ export const api = {
   bulk: (stream_ids: number[], action: "start" | "stop" | "restart" | "delete") =>
     request<BulkResult>("POST", "/api/streams/bulk", { stream_ids, action }),
   deleteVideo: (id: number) => request<{ message: string }>("DELETE", `/api/videos/${id}`),
-  convertVideo: (id: number) => request<Conversion>("POST", `/api/videos/${id}/convert`),
+  convertVideo: (id: number, opts?: { profile: ConvertProfile; fit?: ConvertFit }) =>
+    request<Conversion>("POST", `/api/videos/${id}/convert`, opts),
   conversions: () => request<Conversion[]>("GET", "/api/videos/conversions"),
   cancelConversion: (jobId: string) => request<Conversion>("DELETE", `/api/videos/conversions/${jobId}`),
   analyticsTree: () => request<AnalyticsCategory[]>("GET", "/api/analytics"),

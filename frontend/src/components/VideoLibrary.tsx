@@ -2,7 +2,9 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
 import { formatBytes, formatTime } from "../lib/format";
-import type { Conversion, User, Video } from "../types/api";
+import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, User, Video } from "../types/api";
+import { useRig } from "../hooks/useRigData";
+import { SHAPE_TEXT } from "./CreateStreamDialog";
 import { ConfirmDialog, ErrorBox, Modal, Pill, Spinner, useToast } from "./common";
 import { CameraIcon, DownloadIcon, FilmIcon, PlayIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
@@ -11,7 +13,9 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
   onCreateStream: (videoId: number) => void; search: string; setSearch: (s: string) => void;
 }) {
   const toast = useToast();
+  const out = useRig().config.output;
   const [refreshing, setRefreshing] = useState(false);
+  const [fitting, setFitting] = useState<Video | null>(null);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -67,8 +71,11 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
         {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
           onCreateStream={onCreateStream} onDelete={setDeleting} job={conv.activeFor(v.id)}
-          onConvert={conv.start} onCancel={conv.cancel} />)}
+          onConvert={conv.start} onCancel={conv.cancel} out={out} onFit={setFitting} />)}
       </div>
+
+      {fitting && <FitDialog v={fitting} out={out} onClose={() => setFitting(null)}
+        onStart={async (fit) => { const err = await conv.start(fitting, { profile: "16x9", fit }); if (!err) setFitting(null); return err; }} />}
 
       {deleting && (
         <ConfirmDialog title={`Delete ${deleting.filename}?`} danger confirmLabel="Move to trash"
@@ -119,7 +126,7 @@ export function useConversions(onChanged: () => void) {
       for (const j of list) {
         const before = seen.current[j.id];
         if (before && before !== j.state && (before === "queued" || before === "running")) {
-          if (j.state === "done") { toast("ok", `Converted: ${j.target} is in the library`); changed = true; }
+          if (j.state === "done") { toast("ok", `Done: ${j.target} is in the library`); changed = true; }
           if (j.state === "failed") toast("bad", j.error ?? `Converting ${j.source} failed`);
         }
         seen.current[j.id] = j.state;
@@ -136,12 +143,12 @@ export function useConversions(onChanged: () => void) {
     return () => clearInterval(t);
   }, [busy, load]);
   /** Starts a conversion; resolves to the error message, or null when it started. */
-const start = useCallback(async (v: Video): Promise<string | null> => {
+  const start = useCallback(async (v: Video, opts?: { profile: ConvertProfile; fit?: ConvertFit }): Promise<string | null> => {
     try {
-      const j = await api.convertVideo(v.id);
+      const j = await api.convertVideo(v.id, opts);
       seen.current[j.id] = j.state;
       setJobs((cur) => [j, ...cur]);
-      toast("info", `Converting ${v.filename} to H.264 in the background; the original is kept.`);
+      toast("info", `${WHAT[opts?.profile ?? "h264"]} of ${v.filename} in the background; the original is kept.`);
       return null;
     } catch (e) {
       const msg = (e as ApiError).message;
@@ -160,6 +167,10 @@ const start = useCallback(async (v: Video): Promise<string | null> => {
   };
 }
 
+const WHAT: Record<ConvertProfile, string> = {
+  h264: "Converting to H.264", "720p": "Making a 720p copy", "16x9": "Making a 16:9 copy",
+};
+
 function formatEta(s: number | null): string {
   if (s === null) return "";
   return s < 60 ? ` · ~${s} s left` : ` · ~${Math.round(s / 60)} min left`;
@@ -170,7 +181,7 @@ export function ConversionProgress({ job, onCancel }: { job: Conversion; onCance
   return (
     <div className="space-y-1" data-testid="conversion-progress">
       <div className="flex items-center justify-between text-xs">
-        <span>{job.state === "queued" ? "Waiting to convert…" : `Converting to H.264: ${pct}%${formatEta(job.eta_s)}`}</span>
+        <span>{job.state === "queued" ? "Waiting to convert…" : `${WHAT[job.profile ?? "h264"]}: ${pct}%${formatEta(job.eta_s)}`}</span>
         {onCancel && <button className="btn-ghost btn-xs" onClick={() => onCancel(job)}>Cancel</button>}
       </div>
       <div className="h-1.5 overflow-hidden rounded bg-surface-2">
@@ -224,11 +235,16 @@ export function VideoPlayer({ v, onClose, onConvert, job }: {
 }
 
 /** Memoised: the library re-renders on every poll, a card only when its own video or job changes. */
-const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel }: {
+const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit }: {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
-  job?: Conversion; onConvert: (v: Video) => Promise<string | null>; onCancel: (j: Conversion) => void;
+  job?: Conversion; onConvert: (v: Video, opts?: { profile: ConvertProfile; fit?: ConvertFit }) => Promise<string | null>;
+  onCancel: (j: Conversion) => void; out?: OutputConfig; onFit: (v: Video) => void;
 }) {
   const onConvert = () => convertVideo(v);
+  const notWide = v.is_16_9 === false;
+  const blocked = notWide && !!out?.require_16_9;
+  const isStd = !!out && v.display_width === out.width && v.display_height === out.height;
+  const offer720 = canWrite && !!out && v.is_16_9 === true && !isStd && !v.copy_720p_id && !/ \(720p\)\.mp4$/.test(v.rel_path);
   const reasons = v.convert_reasons ?? [];
   const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
   const [playing, setPlaying] = useState(false);
@@ -262,24 +278,47 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
           <span>{formatBytes(v.size_bytes)}</span>
         </div>
         <div className="flex flex-wrap gap-1" title={tip}>
-          {v.compat_mode === "copy" && <Pill tone="ok">Edge-ready (copy)</Pill>}
+          {v.compat_mode === "copy" && !blocked && <Pill tone="ok">Edge-ready (copy)</Pill>}
           {v.compat_mode === "transcode" && <Pill tone="warn">Needs transcode</Pill>}
           {v.is_vfr && <Pill tone="info">VFR</Pill>}
           {v.audio_codec && <Pill tone="muted">audio dropped</Pill>}
           {v.keyframe_interval_s && v.keyframe_interval_s > 4 && <Pill tone="warn">long GOP</Pill>}
           {v.browser_playable === false && <Pill tone="muted" title={v.browser_note ?? undefined}>plays in VLC only</Pill>}
+          {notWide && <Pill tone="muted" title="Kept in the library; streams must be 16:9. Make a 16:9 copy to stream it.">
+            Not 16:9 · {SHAPE_TEXT[v.shape ?? "other"]}</Pill>}
+          {isStd && <Pill tone="info">{out!.height}p</Pill>}
+          {!!v.copy_720p_id && <Pill tone="ok" title="Streams set to Standard use the 720p copy (no live transcoding)">720p copy ready</Pill>}
+          {!!v.copy_16x9_id && <Pill tone="ok">16:9 copy ready</Pill>}
         </div>
         {job ? <ConversionProgress job={job} onCancel={canWrite ? onCancel : undefined} />
-          : canWrite && reasons.length > 0 && (
-            <button className="btn-secondary w-full" onClick={onConvert} title={reasons.join("\n")}
-              aria-label={`Convert ${v.filename} to H.264`}>
-              <RefreshIcon /> Convert to H.264
-            </button>
+          : canWrite && (
+            <>
+              {reasons.length > 0 && !notWide && !offer720 && (
+                <button className="btn-secondary w-full" onClick={onConvert} title={reasons.join("\n")}
+                  aria-label={`Convert ${v.filename} to H.264`}>
+                  <RefreshIcon /> Convert to H.264
+                </button>
+              )}
+              {offer720 && (
+                <button className="btn-secondary w-full" onClick={() => convertVideo(v, { profile: "720p" })}
+                  title={[`One-off copy at ${out!.width}×${out!.height}, keyframe every 2 s, plays in every browser: `
+                    + "Standard streams then use it without live transcoding.", ...reasons].join("\n")}
+                  aria-label={`Make a 720p copy of ${v.filename}`}>
+                  <RefreshIcon /> Make 720p copy
+                </button>
+              )}
+            </>
           )}
         <div className="mt-auto flex gap-1.5">
-          {canWrite
-            ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
-            : <button className="btn-secondary flex-1" onClick={() => setPlaying(true)}><PlayIcon /> Play</button>}
+          {canWrite && blocked && v.copy_16x9_id
+            ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.copy_16x9_id!)}
+                title="Streams the 16:9 copy of this video"><CameraIcon /> Stream 16:9 copy</button>
+            : canWrite && blocked
+            ? <button className="btn-primary flex-1" onClick={() => onFit(v)} disabled={!!job}
+                title="Streams must be 16:9: make a 16:9 copy (the original is kept)"><RefreshIcon /> Make 16:9 copy</button>
+            : canWrite
+              ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
+              : <button className="btn-secondary flex-1" onClick={() => setPlaying(true)}><PlayIcon /> Play</button>}
           <a className="btn-secondary px-2" href={videoFileUrl(v.id, true)} download={v.filename}
             title="Download to this computer" aria-label={`Download ${v.filename}`}><DownloadIcon /></a>
           {canWrite && isAdmin && (
@@ -294,6 +333,48 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
     </div>
   );
 });
+
+const FITS: { fit: ConvertFit; title: string; text: string }[] = [
+  { fit: "blur", title: "Blurred bars (recommended)", text: "The whole picture, with a blurred, zoomed copy of it filling the sides. Nothing is cut off; looks natural for portrait clips." },
+  { fit: "pad", title: "Black bars", text: "The whole picture with plain black bars. Nothing is cut off." },
+  { fit: "crop", title: "Crop to fill", text: "Fills the frame and cuts off the top and bottom (or the sides). Objects near the edges can be lost." },
+];
+
+/** Choose how a portrait / 4:3 video is fitted into the standard 16:9 frame, then start the copy. */
+export function FitDialog({ v, out, onClose, onStart }: {
+  v: Video; out?: OutputConfig; onClose: () => void; onStart: (fit: ConvertFit) => Promise<string | null>;
+}) {
+  const [fit, setFit] = useState<ConvertFit>("blur");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const size = out ? `${out.width}×${out.height}` : "16:9";
+  return (
+    <Modal title={`Make a 16:9 copy of ${v.filename}`} onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <p className="text-muted">
+          This video is {v.display_width}×{v.display_height} ({SHAPE_TEXT[v.shape ?? "other"]}). Streams must be 16:9, so a copy
+          at {size} is made next to it; the original stays in the library for playing and downloading.
+        </p>
+        <div className="space-y-2" role="radiogroup" aria-label="How to fit the picture">
+          {FITS.map((f) => (
+            <label key={f.fit} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${fit === f.fit ? "border-brand bg-brand/5" : "border-line"}`}>
+              <input type="radio" name="fit" className="mt-1" checked={fit === f.fit} onChange={() => setFit(f.fit)} />
+              <span><span className="font-medium">{f.title}</span><br /><span className="text-muted">{f.text}</span></span>
+            </label>
+          ))}
+        </div>
+        {err && <ErrorBox>{err}</ErrorBox>}
+        <div className="flex justify-end gap-2">
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy}
+            onClick={async () => { setBusy(true); setErr(await onStart(fit)); setBusy(false); }}>
+            {busy ? <Spinner /> : <RefreshIcon />} Make 16:9 copy
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 function UploadButton({ onDone: _onDone }: { onDone: () => void }) {
   // Uploads run in the app-wide queue (bottom-right panel), so they keep going while you

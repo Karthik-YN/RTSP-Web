@@ -64,6 +64,9 @@ class Rig:
             # New streams default to a 5 s lead-in in production; tests that are not
             # about the lead-in keep today's start-at-once behaviour.
             default_lead_in_mode="none",
+            # Production scales new streams to the standard 1280x720; the fixtures are
+            # small 16:9 clips, so tests not about output size stream them as they are.
+            output_default="original",
         )
         params.update(overrides)
         self.settings = Settings(_env_file=None, **params)

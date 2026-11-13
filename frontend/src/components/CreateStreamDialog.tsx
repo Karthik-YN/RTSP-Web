@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type StreamInput } from "../services/api";
 import { formatDuration, formatTime, parseTime, suggestName, validateName } from "../lib/format";
-import type { AppConfig, Stream, ValidateResult, Video } from "../types/api";
+import type { AppConfig, OutputConfig, Stream, ValidateResult, Video } from "../types/api";
 import { LivePlayer } from "./LivePlayer";
 import { CopyButton, ErrorBox, Modal, Pill, Spinner, WarnBox } from "./common";
 import { leadInBody, leadInError, LeadInFields, type LeadInValue } from "./LeadIn";
@@ -36,8 +36,64 @@ export function FastStartNotice({ video, checked, onChange }: {
   );
 }
 
-export function CreateStreamDialog({ videos, streams, config, initialVideoId, template, onClose, onCreated }: {
-  videos: Video[]; streams: Stream[]; config: AppConfig; initialVideoId?: number; template?: StreamTemplate;
+/** True when streams from this video are refused because it is not 16:9. */
+export function blockedShape(v: Video | null | undefined, out?: OutputConfig): boolean {
+  return !!v && !!out?.require_16_9 && v.is_16_9 === false;
+}
+
+export const SHAPE_TEXT: Record<string, string> = {
+  portrait: "portrait", square: "square", "4:3": "4:3", other: "wide/other", "16:9": "16:9",
+};
+
+/** Will this stream be scaled live (costs CPU), or run as-is / from the 720p copy? */
+export function outputPlan(v: Video | null, size: string, out?: OutputConfig): "as-is" | "copy" | "live" {
+  if (!v || !out || size === "original") return "as-is";
+  const [w, h] = size === "standard" ? [out.width, out.height] : size.split("x").map(Number);
+  if ((v.display_width ?? v.width) === w && (v.display_height ?? v.height) === h) return "as-is";
+  if (size === "standard" && v.copy_720p_id) return "copy";
+  return "live";
+}
+
+/** Output size of a new stream: the standard 16:9 size (default), the original, or (admins) another size. */
+export function OutputSizeField({ out, video, value, onChange, isAdmin, idPrefix }: {
+  out?: OutputConfig; video: Video | null; value: string; onChange: (v: string) => void; isAdmin: boolean; idPrefix: string;
+}) {
+  if (!out) return null;
+  const std = `${out.width}x${out.height}`;
+  const extra = out.sizes.filter((s) => s !== std);
+  const plan = outputPlan(video, value, out);
+  const orig = video ? `${video.display_width ?? video.width}×${video.display_height ?? video.height}` : "";
+  return (
+    <div data-testid="output-size">
+      <span className="label">Output size</span>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <label className="flex items-center gap-1.5">
+          <input type="radio" name={`${idPrefix}-out`} checked={value === "standard"} onChange={() => onChange("standard")} />
+          Standard {out.width}×{out.height}
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="radio" name={`${idPrefix}-out`} checked={value === "original"} onChange={() => onChange("original")} />
+          Original{orig && ` (${orig})`}
+        </label>
+        {isAdmin && extra.length > 0 && (
+          <select className="input h-8 w-auto py-1 text-sm" aria-label="Other output size"
+            value={extra.includes(value) ? value : ""} onChange={(e) => e.target.value && onChange(e.target.value)}>
+            <option value="">Other size…</option>
+            {extra.map((s) => <option key={s} value={s}>{s.replace("x", "×")}</option>)}
+          </select>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-muted" data-testid="output-plan">
+        {plan === "as-is" && "Streams the file as it is."}
+        {plan === "copy" && "Uses the ready 720p copy of this video: no live transcoding."}
+        {plan === "live" && "Scaled live on the server (about one CPU core per stream). Make a 720p copy in the library to stream it without that cost."}
+      </p>
+    </div>
+  );
+}
+
+export function CreateStreamDialog({ videos, streams, config, initialVideoId, template, onClose, onCreated, isAdmin }: {
+  videos: Video[]; streams: Stream[]; config: AppConfig; initialVideoId?: number; template?: StreamTemplate; isAdmin?: boolean;
   onClose: () => void; onCreated: () => void;
 }) {
   const addr = useRtspAddress();
@@ -52,6 +108,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
   const [end, setEnd] = useState(template?.end ?? "");
   const [mode, setMode] = useState<"loop" | "once">(template?.mode ?? "loop");
   const [forceTranscode, setForceTranscode] = useState(template?.forceTranscode ?? false);
+  const [outputSize, setOutputSize] = useState<string>(config.output?.default ?? "original");
   const [lead, setLead] = useState<LeadInValue>({
     mode: config.default_lead_in_mode ?? "fixed", seconds: config.default_lead_in_s ?? 5, holdMax: null });
   const [slider, setSlider] = useState(0);
@@ -82,7 +139,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
 
   const body: StreamInput | null = video ? {
     name, video_id: video.id, start: start.trim() || null, end: end.trim() || null, mode,
-    force_transcode: forceTranscode,
+    force_transcode: forceTranscode, output_size: outputSize,
   } : null;
 
   // debounced server-side dry run (keyframe alignment, codec decision, warnings)
@@ -104,7 +161,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoId, name, start, end, mode, forceTranscode, rangeError]);
+  }, [videoId, name, start, end, mode, forceTranscode, outputSize, rangeError]);
 
   const serverErrors = server?.errors ?? [];
   const canSubmit = !!body && !nameError && !rangeError && !submitting && server?.ok === true
@@ -159,9 +216,10 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
               <input className="input max-w-[12rem]" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
               <select id="video" className="input" value={videoId ?? ""} onChange={(e) => { setVideoId(Number(e.target.value)); setSlider(0); }}>
                 {shown.map((v) => (
-                  <option key={v.id} value={v.id}>
+                  <option key={v.id} value={v.id} disabled={blockedShape(v, config.output)}>
                     {v.rel_path} — {formatTime(v.duration_s, false)} · {v.width}x{v.height} · {v.fps?.toFixed(2)} fps · {v.video_codec}
                     {v.compat_mode === "transcode" ? " (transcode)" : ""}
+                    {blockedShape(v, config.output) ? ` (not 16:9: ${SHAPE_TEXT[v.shape ?? "other"]})` : ""}
                   </option>
                 ))}
               </select>
@@ -223,8 +281,11 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
             </div>
           </div>
 
-          <div className="md:col-span-2">
-            <FastStartNotice video={video} checked={forceTranscode} onChange={setForceTranscode} />
+          <div className="md:col-span-2 space-y-3">
+            <OutputSizeField out={config.output} video={video} value={outputSize} onChange={setOutputSize}
+              isAdmin={!!isAdmin} idPrefix="create" />
+            {outputPlan(video, outputSize, config.output) !== "live" &&
+              <FastStartNotice video={video} checked={forceTranscode} onChange={setForceTranscode} />}
           </div>
 
           <div className="md:col-span-2">

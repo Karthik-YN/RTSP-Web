@@ -50,7 +50,7 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
         </div>
       </div>
       {creating && rig.streams && (
-        <CreateStreamDialog videos={rig.videos ?? []} streams={rig.streams} config={rig.config}
+        <CreateStreamDialog videos={rig.videos ?? []} streams={rig.streams} config={rig.config} isAdmin={rig.user.is_admin}
           initialVideoId={creating.videoId} template={creating.template} onClose={() => setCreating(null)}
           onCreated={() => { rig.refreshStreams(); rig.refreshVideos(); }} />
       )}

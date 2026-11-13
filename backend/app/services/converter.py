@@ -8,8 +8,16 @@ all three problems a source file can have, whatever its codec or container:
 * streaming it needs live transcoding (costs a CPU core per stream);
 * its keyframes are far apart (viewers wait for the first picture).
 
+Two more profiles bring a video to the standard stream size (1280x720 by
+default, ``RTSPM_OUTPUT_WIDTH/HEIGHT``):
+
+* ``720p``: a 16:9 video scaled to the standard size, ``<name> (720p).mp4``.
+  Streams set to "Standard" use it automatically, in copy mode.
+* ``16x9``: any other shape (portrait, 4:3...) fitted into the standard
+  16:9 frame with blurred bars, black bars or a crop, ``<name> (720p 16x9).mp4``.
+
 The original is never touched. The copy is written next to it as
-``<name> (h264).mp4`` through a temp file in the uploads folder (cleaned up at
+``<name> (h264).mp4`` (or the profile's suffix) through a temp file in the uploads folder (cleaned up at
 startup if the server stops mid-way), linked in without overwriting, then
 added to the library at once.
 """
@@ -33,6 +41,7 @@ from ..models import Video, VideoStatus
 from . import compatibility
 from .ffprobe_service import ProbeError, probe
 from .file_manager import LibraryError
+from .shape import SHAPE_LABEL, fit_filter, video_shape
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +50,16 @@ BROWSER_PIX_FMTS = {"yuv420p", "yuvj420p"}
 MP4_FAMILY = {".mp4", ".m4v", ".mov"}
 SUFFIX = " (h264)"
 LONG_GOP_S = 4.0
+PROFILES = ("h264", "720p", "16x9")
+FITS = ("blur", "pad", "crop")
+PROFILE_SUFFIX = {"h264": SUFFIX, "720p": " (720p)", "16x9": " (720p 16x9)"}
+PROFILE_LABEL = {"h264": "H.264 copy", "720p": "720p copy", "16x9": "16:9 copy"}
+
+
+def is_copy(rel_path: str) -> bool:
+    """A file this converter made (any profile)."""
+    stem = PurePosixPath(rel_path).stem
+    return any(stem.endswith(sfx) for sfx in PROFILE_SUFFIX.values())
 
 
 def browser_playback(v: Video) -> tuple[bool, str | None]:
@@ -62,7 +81,7 @@ def convert_reasons(v: Video) -> list[str]:
     """Why converting to H.264 would help (empty: nothing to gain)."""
     if v.status != VideoStatus.READY or v.compat_mode == compatibility.REJECT:
         return []
-    if PurePosixPath(v.rel_path).stem.endswith(SUFFIX):
+    if is_copy(v.rel_path):
         return []  # already a converted copy
     out = []
     ok, why = browser_playback(v)
@@ -75,9 +94,9 @@ def convert_reasons(v: Video) -> list[str]:
     return out
 
 
-def target_rel(rel_path: str) -> str:
+def target_rel(rel_path: str, profile: str = "h264") -> str:
     p = PurePosixPath(rel_path)
-    return str(p.with_name(f"{p.stem}{SUFFIX}.mp4"))
+    return str(p.with_name(f"{p.stem}{PROFILE_SUFFIX[profile]}.mp4"))
 
 
 @dataclass
@@ -87,6 +106,8 @@ class Job:
     source: str
     target: str
     username: str | None
+    profile: str = "h264"
+    fit: str | None = None
     state: str = "queued"  # queued | running | done | failed | cancelled
     progress: float = 0.0
     error: str | None = None
@@ -109,6 +130,7 @@ class Job:
         return {"id": self.id, "video_id": self.video_id, "source": self.source, "target": self.target,
                 "state": self.state, "progress": round(self.progress, 3), "eta_s": eta, "error": self.error,
                 "result_video_id": self.result_video_id, "username": self.username,
+                "profile": self.profile, "fit": self.fit, "label": PROFILE_LABEL[self.profile],
                 "created_at": self.created_at, "finished_at": self.finished_at}
 
 
@@ -128,28 +150,44 @@ class Converter:
         return next((j for j in self.jobs.values() if j.video_id == video_id and j.active), None)
 
     # ---------------------------------------------------------- control
-    def start(self, video_id: int, username: str | None) -> Job:
+    def start(self, video_id: int, username: str | None, profile: str = "h264", fit: str = "blur") -> Job:
+        if profile not in PROFILES:
+            raise LibraryError(f"Unknown conversion '{profile}' (use {', '.join(PROFILES)}).", 422)
+        if fit not in FITS:
+            raise LibraryError(f"Unknown fit '{fit}' (use {', '.join(FITS)}).", 422)
         with self.lib.db.session() as s:
             v = s.get(Video, video_id)
         if v is None:
             raise LibraryError(f"Video {video_id} not found.", 404)
         if v.status != VideoStatus.READY or v.compat_mode == compatibility.REJECT:
             raise LibraryError(f"'{v.rel_path}' can't be converted: {v.error or 'it is not a readable video'}.", 409)
-        if PurePosixPath(v.rel_path).stem.endswith(SUFFIX):
+        stem = PurePosixPath(v.rel_path).stem
+        if stem.endswith(PROFILE_SUFFIX[profile]) or (profile == "h264" and is_copy(v.rel_path)):
             raise LibraryError(f"'{v.rel_path}' is already a converted copy.", 409)
+        shape = video_shape(v)
+        W, H = self.s.output_width, self.s.output_height
+        if profile == "720p":
+            if shape["is_16_9"] is False:
+                raise LibraryError(f"'{v.rel_path}' is {SHAPE_LABEL[shape['shape']]}, not 16:9: make a 16:9 copy "
+                                   "instead (blurred bars, black bars or crop).", 409)
+            if (shape["display_width"], shape["display_height"]) == (W, H):
+                raise LibraryError(f"'{v.rel_path}' is already {W}x{H}.", 409)
+        if profile == "16x9" and shape["is_16_9"]:
+            raise LibraryError(f"'{v.rel_path}' is already 16:9: make a 720p copy instead.", 409)
         if self.active_for(video_id):
             raise LibraryError(f"'{v.rel_path}' is already being converted.", 409)
-        tgt = target_rel(v.rel_path)
+        tgt = target_rel(v.rel_path, profile)
         if self.lib.lib.resolve(tgt).exists():
             raise LibraryError(f"'{tgt}' already exists in the library: this video was converted before.", 409)
         if self.s.transcode_policy == "never":
             raise LibraryError("Conversion is disabled (RTSPM_TRANSCODE_POLICY=never).", 409)
-        need = self._estimate_bytes(v)
+        need = self._estimate_bytes(v, profile)
         du = self.lib.lib.disk_usage()
         if du["free"] - need < self.lib.lib.reserve_bytes(du["total"]):
             raise LibraryError(f"Not enough disk space for the copy (about {need / 2**20:.0f} MiB needed).", 507,
                                {"free": du["free"]})
-        job = Job(uuid.uuid4().hex[:12], v.id, v.rel_path, tgt, username)
+        job = Job(uuid.uuid4().hex[:12], v.id, v.rel_path, tgt, username, profile,
+                  fit if profile == "16x9" else None)
         self.jobs[job.id] = job
         job.task = asyncio.create_task(self._run(job, v), name=f"convert-{job.id}")
         self.lib.events.add("video.convert_started", f"{v.rel_path} -> {tgt}", username=username,
@@ -177,21 +215,29 @@ class Converter:
                 await self.cancel(job.id)
 
     # ---------------------------------------------------------- work
-    def _estimate_bytes(self, v: Video) -> int:
+    def _estimate_bytes(self, v: Video, profile: str = "h264") -> int:
         # CRF 20 H.264 is rarely above ~8 Mbit/s at 1080p; never assume less than the source
-        pixels = (v.width or 1920) * (v.height or 1080)
+        if profile == "h264":
+            pixels = (v.width or 1920) * (v.height or 1080)
+        else:
+            pixels = self.s.output_width * self.s.output_height
         mbps = max(2.0, 8.0 * pixels / (1920 * 1080))
-        return int(max(v.size_bytes or 0, (v.duration_s or 600) * mbps * 1e6 / 8))
+        floor = (v.size_bytes or 0) if profile == "h264" else 0
+        return int(max(floor, (v.duration_s or 600) * mbps * 1e6 / 8))
 
-    def command(self, v: Video, src: Path, out: Path) -> list[str]:
+    def video_filter(self, profile: str = "h264", fit: str | None = None) -> str:
+        if profile == "h264":
+            return "scale=trunc(iw/2)*2:trunc(ih/2)*2"  # even dimensions (required by 4:2:0), any input size
+        return fit_filter(self.s.output_width, self.s.output_height, fit or "pad")
+
+    def command(self, v: Video, src: Path, out: Path, profile: str = "h264", fit: str | None = None) -> list[str]:
         fps = v.fps if v.fps and v.fps > 0 else 25.0
         gop = max(1, int(round(fps * self.s.x264_gop_seconds)))
         cmd = [self.s.ffmpeg_bin, "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats", "-y",
                "-i", str(src), "-map", "0:v:0", "-sn", "-dn", "-an",
                "-c:v", "libx264", "-preset", self.s.convert_preset, "-crf", str(self.s.convert_crf),
                "-profile:v", "high", "-pix_fmt", "yuv420p",
-               # even dimensions (required by 4:2:0), any input size
-               "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+               "-vf", self.video_filter(profile, fit),
                "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
                "-force_key_frames", f"expr:gte(t,n_forced*{self.s.x264_gop_seconds:g})",
                "-movflags", "+faststart", "-f", "mp4", "-progress", "pipe:1", str(out)]
@@ -220,6 +266,9 @@ class Converter:
                     raise LibraryError(f"The converted file is not readable: {exc}", 422)
                 if (meta.video_codec or "").lower() != "h264":
                     raise LibraryError("The converted file has no H.264 video.", 422)
+                if job.profile != "h264" and (meta.width, meta.height) != (self.s.output_width, self.s.output_height):
+                    raise LibraryError(f"The copy came out {meta.width}x{meta.height}, not "
+                                       f"{self.s.output_width}x{self.s.output_height}.", 422)
                 final.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     os.link(tmp, final)  # never overwrites
@@ -259,7 +308,7 @@ class Converter:
         if os.name == "posix":
             kw["preexec_fn"] = lambda: os.nice(10)  # never starve the live publishers
         job.proc = proc = await asyncio.create_subprocess_exec(
-            *self.command(v, src, out), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kw)
+            *self.command(v, src, out, job.profile, job.fit), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kw)
         duration = v.duration_s or 0
         err_task = asyncio.create_task(proc.stderr.read())
         async for raw in proc.stdout:

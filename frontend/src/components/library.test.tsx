@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConversionProgress, VideoPlayer, videoFileUrl } from "./VideoLibrary";
+import { ConversionProgress, FitDialog, VideoPlayer, videoFileUrl } from "./VideoLibrary";
+import { blockedShape, OutputSizeField, outputPlan } from "./CreateStreamDialog";
 import type { Conversion, Video } from "../types/api";
 
 const video = {
@@ -58,5 +59,42 @@ describe("Library play and download", () => {
     expect(screen.getByTestId("conversion-progress")).toHaveTextContent("Converting to H.264: 42% · ~2 min left");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalledWith(job);
+  });
+});
+
+describe("16:9 and standard output", () => {
+  const out = { width: 1280, height: 720, default: "standard" as const, sizes: ["640x360", "1280x720", "1920x1080"], require_16_9: true };
+  const wide = { ...video, display_width: 1920, display_height: 1080, shape: "16:9", is_16_9: true } as Video;
+
+  it("says whether a stream runs as-is, from the 720p copy, or scaled live", () => {
+    expect(outputPlan(wide, "original", out)).toBe("as-is");
+    expect(outputPlan(wide, "standard", out)).toBe("live");
+    expect(outputPlan({ ...wide, copy_720p_id: 9 }, "standard", out)).toBe("copy");
+    expect(outputPlan({ ...wide, display_width: 1280, display_height: 720 }, "standard", out)).toBe("as-is");
+    expect(blockedShape({ ...wide, is_16_9: false }, out)).toBe(true);
+    expect(blockedShape({ ...wide, is_16_9: false }, { ...out, require_16_9: false })).toBe(false);
+  });
+
+  it("offers Standard and Original, and other sizes only to admins", async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<OutputSizeField out={out} video={wide} value="standard" onChange={onChange} isAdmin={false} idPrefix="t" />);
+    expect(screen.getByTestId("output-plan")).toHaveTextContent("Scaled live");
+    expect(screen.queryByLabelText("Other output size")).toBeNull();
+    await userEvent.setup().click(screen.getByLabelText(/Original \(1920×1080\)/));
+    expect(onChange).toHaveBeenCalledWith("original");
+    rerender(<OutputSizeField out={out} video={{ ...wide, copy_720p_id: 3 }} value="standard" onChange={onChange} isAdmin idPrefix="t" />);
+    expect(screen.getByTestId("output-plan")).toHaveTextContent("720p copy");
+    expect(screen.getByLabelText("Other output size")).toBeInTheDocument();
+  });
+
+  it("asks how to fit a portrait video into 16:9 and starts the copy", async () => {
+    const onStart = vi.fn(async () => null);
+    const portrait = { ...video, filename: "phone.mp4", display_width: 1080, display_height: 1920, shape: "portrait", is_16_9: false } as Video;
+    render(<FitDialog v={portrait} out={out} onClose={() => {}} onStart={onStart} />);
+    expect(screen.getByText(/1080×1920 \(portrait\)/)).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(/Crop to fill/));
+    await user.click(screen.getByRole("button", { name: /Make 16:9 copy/ }));
+    expect(onStart).toHaveBeenCalledWith("crop");
   });
 });

@@ -29,6 +29,12 @@ def _proc_index(ctx: Context) -> dict[int, dict]:
     return {p["pid"]: p for p in (ctx.sysmon.sample or {}).get("ffmpeg", [])}
 
 
+def _out_res(row: Stream) -> str | None:
+    cfg = row.config_json or {}
+    w, h = cfg.get("out_width") or cfg.get("width"), cfg.get("out_height") or cfg.get("height")
+    return f"{w}x{h}" if w and h else None
+
+
 def stream_out(ctx: Context, row: Stream, proc_index: dict | None = None) -> StreamOut:
     return StreamOut(
         id=row.id, name=row.name, rtsp_url=ctx.settings.public_rtsp_url(row.name), video_id=row.video_id,
@@ -37,6 +43,8 @@ def stream_out(ctx: Context, row: Stream, proc_index: dict | None = None) -> Str
         effective_end_s=(row.config_json or {}).get("segment_end_s"),
         playback_mode=row.playback_mode, playback_speed=row.playback_speed,
         force_transcode=bool(row.force_transcode), output_mode=row.output_mode,
+        output_size=(row.config_json or {}).get("output_size") or "original",
+        output_resolution=_out_res(row),
         desired_state=row.desired_state, status=row.status, status_detail=row.status_detail, pid=row.pid,
         last_error=row.last_error, loop_count=row.loop_count, restart_count=row.restart_count,
         version=row.version, created_at=row.created_at, created_by=row.created_by, updated_at=row.updated_at,
@@ -56,7 +64,7 @@ def guard(row: Stream, user: User, action: str) -> None:
                                  f"only they or an admin can {action} it.{note}")
 
 
-def _cfg(body, row: Stream | None = None) -> StreamConfig:
+def _cfg(body, row: Stream | None = None, default_output: str = "original") -> StreamConfig:
     try:
         start = parse_timestamp(body.start, "start")
         end = parse_timestamp(body.end, "end")
@@ -64,13 +72,17 @@ def _cfg(body, row: Stream | None = None) -> StreamConfig:
         raise Invalid(str(exc), {"field": exc.field})
     if row is None:
         return StreamConfig(video_id=body.video_id, start_s=start, end_s=end, mode=body.mode,
-                            force_transcode=body.force_transcode)
+                            force_transcode=body.force_transcode,
+                            output_size=getattr(body, "output_size", None) or default_output)
+    new_video = body.video_id is not None and body.video_id != row.video_id
     return StreamConfig(
         video_id=body.video_id if body.video_id is not None else row.video_id,
         start_s=start if body.start is not None else row.start_offset_s,
         end_s=None if body.clear_end else (end if body.end is not None else row.end_offset_s),
         mode=body.mode or row.playback_mode,
         force_transcode=body.force_transcode if body.force_transcode is not None else bool(row.force_transcode),
+        output_size=getattr(body, "output_size", None) or (row.config_json or {}).get("output_size") or "original",
+        enforce_shape=new_video,
     )
 
 
@@ -94,7 +106,7 @@ async def validate(body: StreamCreate, ctx: Context = Depends(get_ctx), _: User 
     except ValidationError as exc:
         errors.append({"field": "name", "message": str(exc)})
     try:
-        fields = await ctx.supervisor.prepare(_cfg(body))
+        fields = await ctx.supervisor.prepare(_cfg(body, default_output=ctx.settings.output_default))
     except ServiceError as exc:
         errors.append({"field": exc.details.get("field"), "message": exc.message})
         return StreamValidateOut(ok=False, errors=errors)
@@ -115,7 +127,7 @@ async def create_stream(body: StreamCreate, wait: bool = False, ctx: Context = D
         with ctx.db.session() as s:
             if s.get(AnalyticsSlot, body.slot_id) is None:
                 raise HTTPException(404, "Video placeholder not found.")
-    row = await ctx.supervisor.create(body.name, _cfg(body), body.start_now, user.username,
+    row = await ctx.supervisor.create(body.name, _cfg(body, default_output=ctx.settings.output_default), body.start_now, user.username,
                                       note=body.note, protected=body.protected, slot_id=body.slot_id,
                                       lead_in_mode=body.lead_in_mode, lead_in_s=body.lead_in_s,
                                       hold_max_s=body.hold_max_s)
@@ -154,7 +166,7 @@ async def update_stream(stream_id: int, body: StreamUpdate, version: int | None 
     if body.protected is not None and not (user.is_admin or user.username == row.owner):
         raise HTTPException(403, "Only the owner or an admin can protect or unprotect a stream.")
     touches_cfg = any(v is not None for v in (body.video_id, body.start, body.end, body.mode,
-                                              body.force_transcode)) or body.clear_end
+                                              body.force_transcode, body.output_size)) or body.clear_end
     meta = {k: v for k, v in (("note", body.note), ("protected", body.protected), ("owner", body.owner),
                               ("lead_in_mode", body.lead_in_mode), ("lead_in_s", body.lead_in_s),
                               ("hold_max_s", body.hold_max_s)) if v is not None}

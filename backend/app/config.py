@@ -119,6 +119,15 @@ class Settings(BaseSettings):
     convert_crf: int = Field(default=20, ge=0, le=51)
     convert_concurrency: int = Field(default=1, ge=1, le=8)
     convert_threads: int = Field(default=0, ge=0, le=64)  # 0 = libx264 decides
+    # Standard output: every stream is 16:9 at this size unless "Original" is chosen.
+    # 1080p sources reach it cheaply through a one-off "720p copy" (then copy mode).
+    output_width: int = Field(default=1280, ge=160, le=3840)
+    output_height: int = Field(default=720, ge=90, le=2160)
+    output_default: Literal["standard", "original"] = "standard"  # for new streams
+    standard_sizes: CsvList = ["640x360", "1280x720", "1920x1080"]  # extra sizes admins may pick
+    # Refuse streams from videos that are not 16:9 (portrait, 4:3...). They stay in the
+    # library: play, download, or make a 16:9 copy (blurred bars / black bars / crop).
+    require_16_9: bool = True
 
     # --------------------------------------------------------- stream policy
     stream_name_pattern: str = r"^[A-Za-z0-9_-]{1,64}$"
@@ -208,7 +217,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "copy_codecs", "copy_pix_fmts", "copy_profiles", "reserved_names",
-        "allowed_extensions", "rtsp_alt_hosts", "cf_access_aud", mode="before",
+        "allowed_extensions", "rtsp_alt_hosts", "cf_access_aud", "standard_sizes", mode="before",
     )
     @classmethod
     def _split_csv(cls, v):

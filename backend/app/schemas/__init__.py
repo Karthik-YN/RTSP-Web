@@ -77,6 +77,12 @@ class VideoOut(BaseModel):
     browser_note: str | None = None
     convert_reasons: list[str] = []
     converting: dict | None = None  # the running/queued conversion job, if any
+    display_width: int | None = None  # as shown: rotation and non-square pixels applied
+    display_height: int | None = None
+    shape: str | None = None  # 16:9 | portrait | 4:3 | square | other
+    is_16_9: bool | None = None
+    copy_720p_id: int | None = None  # the ready "(720p)" copy of this video, if any
+    copy_16x9_id: int | None = None  # the ready "(720p 16x9)" copy of a non-16:9 video, if any
 
 
 class ScanOut(BaseModel):
@@ -115,6 +121,9 @@ class StreamCreate(BaseModel):
     end: TimeValue = Field(default=None, description="Optional end; empty = end of file")
     mode: Literal["loop", "once"] = "loop"
     force_transcode: bool = False
+    output_size: str | None = Field(default=None, max_length=20,
+                                    description="standard (RTSPM_OUTPUT_WIDTH x HEIGHT), original, or WxH from "
+                                                "RTSPM_STANDARD_SIZES (default: RTSPM_OUTPUT_DEFAULT)")
     start_now: bool = True
     note: str | None = Field(default=None, max_length=500)
     protected: bool = False
@@ -135,6 +144,7 @@ class StreamUpdate(BaseModel):
     clear_end: bool = False
     mode: Literal["loop", "once"] | None = None
     force_transcode: bool | None = None
+    output_size: str | None = Field(default=None, max_length=20)
     note: str | None = Field(default=None, max_length=500)
     protected: bool | None = None
     owner: str | None = Field(default=None, max_length=64)
@@ -171,6 +181,8 @@ class StreamOut(BaseModel):
     playback_speed: float
     force_transcode: bool
     output_mode: str | None
+    output_size: str = "original"
+    output_resolution: str | None = None  # what readers get, e.g. 1280x720
     desired_state: str
     status: str
     status_detail: str | None
