@@ -221,6 +221,16 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        7,
+        # Who uploaded a video, when, and from which address and browser (shown in the library).
+        """
+        ALTER TABLE videos ADD COLUMN uploaded_by TEXT;
+        ALTER TABLE videos ADD COLUMN uploaded_at TEXT;
+        ALTER TABLE videos ADD COLUMN uploaded_from TEXT;
+        ALTER TABLE videos ADD COLUMN uploaded_agent TEXT;
+        """,
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

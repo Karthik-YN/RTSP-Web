@@ -16,6 +16,8 @@ from ..services.auth import User
 from pydantic import BaseModel
 
 from ..services.converter import browser_playback, convert_reasons, target_rel
+from ..services.agent import describe_agent
+from ..services.auth import client_ip
 from ..services.shape import video_shape
 from ..services.ffprobe_service import ProbeError
 from ..services.file_manager import LibraryError
@@ -47,7 +49,14 @@ def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str
         converting=job.view() if job else None,
         **video_shape(v), copy_720p_id=(copies or {}).get(target_rel(v.rel_path, "720p")),
         copy_16x9_id=(copies or {}).get(target_rel(v.rel_path, "16x9")),
+        uploaded_by=v.uploaded_by, uploaded_at=v.uploaded_at, uploaded_from=v.uploaded_from,
+        uploaded_device=describe_agent(v.uploaded_agent),
     )
+
+
+def _origin(request: Request) -> dict:
+    """Where an upload came from: client IP (proxy headers trusted only from loopback) and browser."""
+    return {"ip": client_ip(request), "agent": request.headers.get("user-agent", "")}
 
 
 def _get(ctx: Context, video_id: int) -> Video:
@@ -105,7 +114,7 @@ async def upload(request: Request, filename: str = Query(..., max_length=512),
     except ValueError:
         size = 0
     try:
-        video = await ctx.library.receive_upload(filename, size, request.stream(), user.username)
+        video = await ctx.library.receive_upload(filename, size, request.stream(), user.username, _origin(request))
     except ClientDisconnect:
         raise HTTPException(400, "Upload cancelled by the client; partial data was discarded.")
     except LibraryError as exc:
@@ -120,14 +129,15 @@ def _lib_error(exc: LibraryError) -> HTTPException:
 
 
 @router.post("/uploads", status_code=201)
-def start_upload(body: UploadCheckIn, ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
+def start_upload(body: UploadCheckIn, request: Request, ctx: Context = Depends(get_ctx),
+                 user: User = Depends(require_operator)):
     """Start a resumable upload: reserves disk space, returns a session id and offset 0.
 
     Then ``PUT /api/videos/uploads/{id}?offset=N`` with the next bytes as the raw body.
     After a network failure, ``GET`` the session to learn the offset and continue.
     """
     try:
-        return ctx.library.start_session(body.filename, body.size, user.username)
+        return ctx.library.start_session(body.filename, body.size, user.username, _origin(request))
     except LibraryError as exc:
         raise _lib_error(exc)
 

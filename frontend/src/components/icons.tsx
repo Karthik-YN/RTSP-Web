@@ -41,3 +41,4 @@ export const ImageIcon = (p: P) => <Svg {...p}><rect x="3" y="3" width="18" heig
 export const ChevronIcon = (p: P) => <Svg {...p}><polyline points="9 18 15 12 9 6" /></Svg>;
 export const EditIcon = (p: P) => <Svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></Svg>;
 export const DownloadIcon = (p: P) => <Svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></Svg>;
+export const InfoIcon = (p: P) => <Svg {...p}><circle cx="12" cy="12" r="9" /><line x1="12" y1="11" x2="12" y2="16" /><line x1="12" y1="8" x2="12.01" y2="8" /></Svg>;

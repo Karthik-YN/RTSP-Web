@@ -241,7 +241,8 @@ class VideoLibrary:
         info = self.uploads.check(self.lib, size)
         return {"filename": name, "exists": exists, **info}
 
-    async def receive_upload(self, filename: str, size: int, chunks, username: str | None) -> Video:
+    async def receive_upload(self, filename: str, size: int, chunks, username: str | None,
+                             origin: dict | None = None) -> Video:
         """Stream an upload to a temp file, then atomically link it into the library.
 
         ``chunks`` is an async iterator of bytes. Disk space is reserved
@@ -286,7 +287,7 @@ class VideoLibrary:
             with contextlib.suppress(FileNotFoundError):
                 tmp.unlink()
             self.uploads.release(token)
-        return await self._register_upload(final, name, size, username)
+        return await self._register_upload(final, name, size, username, origin)
 
     async def _verify_and_link(self, tmp: Path, final: Path, name: str) -> None:
         try:
@@ -300,8 +301,17 @@ class VideoLibrary:
         except FileExistsError:
             raise LibraryError(f"A file named '{name}' appeared while uploading; not overwritten.", 409)
 
-    async def _register_upload(self, final: Path, name: str, size: int, username: str | None) -> Video:
+    async def _register_upload(self, final: Path, name: str, size: int, username: str | None,
+                               origin: dict | None = None) -> Video:
         video = await self._ingest(name, final.stat(), None)
+        origin = origin or {}
+        with self.db.session() as s:
+            row = s.get(Video, video.id)
+            row.uploaded_by = username
+            row.uploaded_at = utcnow()
+            row.uploaded_from = (origin.get("ip") or None)
+            row.uploaded_agent = (origin.get("agent") or "")[:300] or None
+        video = row  # committed when the session closes; attributes stay loaded
         self.events.add("video.uploaded", f"{name} ({size} bytes)", username=username, data={"video_id": video.id})
         return video
 
@@ -311,7 +321,7 @@ class VideoLibrary:
     # Sessions live in memory (a backend restart discards them and their temp
     # files) and expire after ``upload_session_idle_s`` without data.
 
-    def start_session(self, filename: str, size: int, username: str | None) -> dict:
+    def start_session(self, filename: str, size: int, username: str | None, origin: dict | None = None) -> dict:
         name = sanitize_upload_name(filename, self.s.allowed_extensions)
         if size <= 0:
             raise LibraryError("Upload size must be greater than zero.")
@@ -326,7 +336,8 @@ class VideoLibrary:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
         os.close(fd)
         self._sessions[sid] = {"id": sid, "name": name, "size": size, "offset": 0, "token": token, "tmp": tmp,
-                               "user": username, "touched": time.monotonic(), "lock": asyncio.Lock()}
+                               "user": username, "origin": origin, "touched": time.monotonic(),
+                               "lock": asyncio.Lock()}
         return self.session_info(sid)
 
     def session_info(self, sid: str) -> dict:
@@ -374,7 +385,7 @@ class VideoLibrary:
                 await self._verify_and_link(s["tmp"], final, s["name"])
             finally:
                 self.abort_session(sid)
-            return await self._register_upload(final, s["name"], s["size"], s["user"])
+            return await self._register_upload(final, s["name"], s["size"], s["user"], s.get("origin"))
 
     def abort_session(self, sid: str) -> None:
         s = self._sessions.pop(sid, None)

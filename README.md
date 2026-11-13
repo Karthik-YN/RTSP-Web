@@ -73,7 +73,7 @@ Details, network/firewall, LXC notes and recovery verification are in **[docs/DE
 | Task | Command |
 |---|---|
 | Configure | edit `/etc/rtsp-manager/rtsp-manager.env` (see [.env.example](.env.example)), then `sudo systemctl restart rtsp-manager` |
-| Require a login (optional) | set `RTSPM_AUTH_ENABLED=true`, then create users with `scripts/manage_users.py` |
+| Require a login (optional) | set `RTSPM_AUTH_ENABLED=true`, then create users with `scripts/manage_users.py` (Docker: `docker compose exec rig02 rig02-users add <name> --role admin`); uploads then record who uploaded each video |
 | Start / stop services | `sudo systemctl start mediamtx rtsp-manager` · `sudo systemctl stop rtsp-manager mediamtx` |
 | Status | `systemctl status mediamtx rtsp-manager` · `scripts/healthcheck.sh --rtsp` |
 | Logs | `journalctl -u rtsp-manager -f` · `journalctl -u mediamtx -f` · `/var/lib/rtsp-manager/logs/streams/<id>.log` |

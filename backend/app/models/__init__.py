@@ -99,6 +99,11 @@ class Video(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # Set for files uploaded through the dashboard/API; NULL for files copied onto the server.
+    uploaded_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    uploaded_from: Mapped[str | None] = mapped_column(Text, nullable=True)  # client IP
+    uploaded_agent: Mapped[str | None] = mapped_column(Text, nullable=True)  # browser User-Agent
 
     def fingerprint(self) -> dict:
         return {

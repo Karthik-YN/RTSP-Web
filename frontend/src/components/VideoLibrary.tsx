@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
-import { formatBytes, formatDuration, formatTime } from "../lib/format";
+import { formatBitrate, formatBytes, formatDuration, formatTime, since } from "../lib/format";
 import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, PreviewConfig, User, Video } from "../types/api";
 import { useRig } from "../hooks/useRigData";
 import { SHAPE_TEXT } from "./CreateStreamDialog";
 import { ConfirmDialog, ErrorBox, Modal, Pill, Spinner, useToast } from "./common";
-import { CameraIcon, DownloadIcon, FilmIcon, PlayIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
+import { CameraIcon, DownloadIcon, FilmIcon, InfoIcon, PlayIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
 export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
   videos: Video[]; loading: boolean; user: User | null; onChanged: () => void;
@@ -273,6 +273,7 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
   const reasons = v.convert_reasons ?? [];
   const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
   const [playing, setPlaying] = useState(false);
+  const [details, setDetails] = useState(false);
   return (
     <div className="card flex flex-col overflow-hidden" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 22rem" }}>
       {/* Fixed 16:9 box: portrait and 4:3 thumbnails are letterboxed inside it, so every card has the same height. */}
@@ -295,7 +296,14 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
         )}
       </div>
       <div className="flex flex-1 flex-col gap-1.5 p-3">
-        <div className="line-clamp-2 break-words text-sm font-medium leading-snug" title={v.rel_path}>{v.rel_path}</div>
+        <div className="flex items-start gap-1">
+          <div className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-medium leading-snug" title={v.rel_path}>{v.rel_path}</div>
+          <button className="-mr-1 -mt-0.5 rounded p-1 text-muted hover:bg-slate-100 hover:text-current dark:hover:bg-slate-800"
+            onClick={() => setDetails(true)} aria-label={`Details of ${v.filename}`} title="Details and uploader">
+            <InfoIcon />
+          </button>
+        </div>
+        <UploaderLine v={v} />
         <div className="flex flex-wrap gap-x-2 text-xs text-muted">
           <span>{v.width}×{v.height}</span>
           <span>{v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")} fps` : "–"}</span>
@@ -353,11 +361,87 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
           )}
         </div>
       </div>
+      {details && <VideoDetails v={v} onClose={() => setDetails(false)} />}
       {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} job={job} preview={preview}
         onConvert={canWrite && reasons.length > 0 ? onConvert : undefined} />}
     </div>
   );
 });
+
+/** "Uploaded by alice · 2h ago", or "Added on server" for files copied straight into the video folder. */
+export function UploaderLine({ v, now }: { v: Video; now?: number }) {
+  if (!v.uploaded_by) {
+    return <div className="truncate text-xs text-muted" data-testid="uploader">Added on server</div>;
+  }
+  const anon = v.uploaded_by === "anonymous";
+  const who = anon ? (v.uploaded_device || v.uploaded_from || "anonymous") : v.uploaded_by;
+  const when = v.uploaded_at ? `${since(v.uploaded_at, now)} ago` : null;
+  const full = [v.uploaded_by, v.uploaded_at && new Date(v.uploaded_at).toLocaleString(), v.uploaded_from, v.uploaded_device]
+    .filter(Boolean).join(" · ");
+  return (
+    <div className="truncate text-xs text-muted" data-testid="uploader" title={full}>
+      Uploaded by <span className="font-medium text-current">{who}</span>{when && <> · {when}</>}
+    </div>
+  );
+}
+
+function Row({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[8.5rem_1fr] gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0 dark:border-slate-800">
+      <dt className="text-muted">{k}</dt><dd className="min-w-0 break-words">{children ?? "–"}</dd>
+    </div>
+  );
+}
+
+/** FFmpeg reports a family ("mov,mp4,m4a,…"): show the member matching the file's extension. */
+export function containerName(v: Video): string | null {
+  if (!v.container) return null;
+  const names = v.container.split(",");
+  const ext = v.rel_path.split(".").pop()?.toLowerCase() ?? "";
+  return names.includes(ext) ? ext : names[0];
+}
+
+/** Everything known about one library video: who uploaded it, from where, and its technical details. */
+export function VideoDetails({ v, onClose }: { v: Video; onClose: () => void }) {
+  const fps = v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")}${v.is_vfr ? " (variable)" : ""}` : null;
+  const disp = v.display_width && v.display_height && (v.display_width !== v.width || v.display_height !== v.height)
+    ? ` (shown as ${v.display_width}×${v.display_height})` : "";
+  return (
+    <Modal title={v.filename} onClose={onClose}>
+      <dl data-testid="video-details">
+        <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Upload</h3>
+        {v.uploaded_by ? (
+          <>
+            <Row k="Uploaded by">{v.uploaded_by}</Row>
+            <Row k="When">{v.uploaded_at ? `${new Date(v.uploaded_at).toLocaleString()} (${since(v.uploaded_at)} ago)` : null}</Row>
+            <Row k="From address">{v.uploaded_from}</Row>
+            <Row k="Device">{v.uploaded_device}</Row>
+          </>
+        ) : <Row k="Uploaded by">Added on server (copied into the video folder, not uploaded through this app)</Row>}
+        <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted">File</h3>
+        <Row k="Path"><span className="font-mono text-xs">{v.rel_path}</span></Row>
+        <Row k="Size">{formatBytes(v.size_bytes)}</Row>
+        <Row k="Duration">{v.duration_s != null ? `${formatTime(v.duration_s, false)} (${formatDuration(v.duration_s)})` : null}</Row>
+        <Row k="Container">{containerName(v)}</Row>
+        <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Video</h3>
+        <Row k="Resolution">{v.width && v.height ? `${v.width}×${v.height}${disp}` : null}</Row>
+        <Row k="Shape">{v.shape ? (v.is_16_9 ? "16:9" : `Not 16:9 · ${SHAPE_TEXT[v.shape]}`) : null}</Row>
+        <Row k="Codec">{[v.video_codec, v.video_profile, v.pix_fmt, v.bit_depth ? `${v.bit_depth}-bit` : null].filter(Boolean).join(" · ") || null}</Row>
+        <Row k="Frame rate">{fps}</Row>
+        <Row k="Bitrate">{v.bitrate_bps ? formatBitrate(v.bitrate_bps) : null}</Row>
+        <Row k="Keyframes">{v.keyframe_interval_s ? `every ${v.keyframe_interval_s.toFixed(1)} s` : null}</Row>
+        <Row k="Audio">{v.audio_codec ? `${v.audio_codec} (dropped when streaming)` : "none"}</Row>
+        <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Streaming</h3>
+        <Row k="Mode">{v.compat_mode === "copy" ? "Copy (no transcoding)" : v.compat_mode === "transcode" ? "Live transcode" : v.compat_mode}</Row>
+        <Row k="In use by">{`${v.streams_using} stream${v.streams_using === 1 ? "" : "s"}`}</Row>
+        <Row k="Copies">{[v.copy_720p_id && "720p copy ready", v.copy_16x9_id && "16:9 copy ready"].filter(Boolean).join(", ") || "none"}</Row>
+        {[...v.compat_reasons, ...v.compat_warnings].length > 0 && (
+          <Row k="Notes"><ul className="list-disc pl-4">{[...v.compat_reasons, ...v.compat_warnings].map((n) => <li key={n}>{n}</li>)}</ul></Row>
+        )}
+      </dl>
+    </Modal>
+  );
+}
 
 const FITS: { fit: ConvertFit; title: string; text: string }[] = [
   { fit: "blur", title: "Blurred bars (recommended)", text: "The whole picture, with a blurred, zoomed copy of it filling the sides. Nothing is cut off; looks natural for portrait clips." },

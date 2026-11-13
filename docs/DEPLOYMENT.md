@@ -259,6 +259,23 @@ sudo -u rtspmgr env RTSPM_ENV_FILE=/dev/null RTSPM_DATA_DIR=/var/lib/rtsp-manage
 sudo systemctl restart rtsp-manager
 ```
 
+**Turn on login with Docker** (the Proxmox VM setup):
+
+```bash
+cd ~/rig02
+echo 'RTSPM_AUTH_ENABLED=true' >> .env           # or edit the existing line
+sudo docker compose up -d                        # recreates the container with the new setting
+sudo docker compose exec rig02 rig02-users add <your-name> --role admin   # you type the password twice
+sudo docker compose exec rig02 rig02-users list
+```
+
+Then sign in on the dashboard and add colleagues on the **Users** page (or with `rig02-users add <name>`). New users are **operators** by default: they can upload, stream and convert. **Viewers** can only watch, play and download. Only admins delete videos, change capacity and manage users. Users are stored hashed in the data volume (`/data/state/users`) and picked up without a restart.
+
+* **What stays open:** RTSP reads (`rtsp://…:8554/<name>`) need no password, so the edge boxes keep working unchanged. `/api/health` stays open for the container health check.
+* **Who uploaded what:** with login on, the library records the signed-in user for every upload, plus the time, the uploading address and the device (e.g. "Windows · Chrome"). Click ⓘ on a library card to see it. Files copied straight into the video folder show "Added on server". Uploads made before login was turned on show "anonymous" with the device.
+* **Plain http on the LAN or Tailscale:** the session cookie works without HTTPS (`RTSPM_COOKIE_SECURE` stays false). Passwords then cross the network unencrypted, so prefer Tailscale or `tailscale serve` (HTTPS) from other networks.
+* **Forgot the admin password:** run `rig02-users add <name> --role admin` again; it sets a new password.
+
 ## 4c. Remote access via Cloudflare (from anywhere on the internet)
 
 The dashboard (UI, API, live preview, uploads) is published through a **Cloudflare Tunnel**: `cloudflared` makes an outbound connection to Cloudflare, so no port is opened on the office router. A **Cloudflare Access** application in front of the hostname decides who may sign in (company SSO or a one-time PIN sent by e-mail).

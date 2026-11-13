@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConversionProgress, FitDialog, previewStarts, VideoPlayer, videoFileUrl } from "./VideoLibrary";
+import { ConversionProgress, FitDialog, previewStarts, containerName, UploaderLine, VideoDetails, VideoPlayer, videoFileUrl } from "./VideoLibrary";
 import { blockedShape, OutputSizeField, outputPlan } from "./CreateStreamDialog";
 import type { Conversion, Video } from "../types/api";
 
@@ -120,5 +120,38 @@ describe("long-video preview", () => {
   it("plays short videos in full", () => {
     render(<VideoPlayer v={video} onClose={() => {}} preview={preview} />);
     expect(screen.getByTestId("video-player")).toHaveAttribute("src", "/api/videos/7/file");
+  });
+});
+
+describe("uploader", () => {
+  const now = Date.parse("2026-11-13T12:00:00Z");
+  const up = { ...video, uploaded_by: "alice", uploaded_at: "2026-11-13T10:00:00+00:00",
+    uploaded_from: "192.168.29.40", uploaded_device: "Windows · Chrome" } as Video;
+
+  it("shows who uploaded a video and when", () => {
+    render(<UploaderLine v={up} now={now} />);
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by alice · 2h 0m ago");
+  });
+
+  it("names the device when there was no login, and files copied onto the server", () => {
+    const { rerender } = render(<UploaderLine v={{ ...up, uploaded_by: "anonymous" }} now={now} />);
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by Windows · Chrome");
+    rerender(<UploaderLine v={video} now={now} />);
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Added on server");
+  });
+
+  it("names the container by the file's own format", () => {
+    expect(containerName({ ...video, container: "mov,mp4,m4a,3gp,3g2,mj2" })).toBe("mp4");
+    expect(containerName({ ...video, rel_path: "a.mov", container: "mov,mp4,m4a,3gp,3g2,mj2" })).toBe("mov");
+    expect(containerName({ ...video, rel_path: "a.avi", container: "avi" })).toBe("avi");
+  });
+
+  it("lists uploader and technical details", () => {
+    render(<VideoDetails v={{ ...up, shape: "16:9", is_16_9: true }} onClose={() => {}} />);
+    const d = screen.getByTestId("video-details");
+    for (const t of ["alice", "192.168.29.40", "Windows · Chrome", "1920×1080", "h264 · High · yuv420p · 8-bit",
+      "23.976", "6.5 Mbit/s", "every 2.0 s", "Copy (no transcoding)"]) {
+      expect(d).toHaveTextContent(t);
+    }
   });
 });

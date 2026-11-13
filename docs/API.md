@@ -31,7 +31,7 @@ Requests that arrive through Cloudflare (a `Cf-Ray` / `Cf-Connecting-Ip` header)
 | POST | `/api/auth/password` `{current_password,new_password}` | Change your own password |
 | GET/POST | `/api/users` · PATCH/DELETE `/api/users/{name}` | **Admin**: list/create users, change role or reset password, delete (the last admin is protected) |
 | GET | `/api/config` | Public RTSP host/port, `rtsp_hosts` (address choices: canonical, alternates, the address this request used), `server_addresses`, URL template, name rules, limits, output profile, warnings |
-| GET | `/api/videos?search=&status=&include_missing=` | Library with FFprobe metadata and compatibility verdict |
+| GET | `/api/videos?search=&status=&include_missing=` | Library with FFprobe metadata and compatibility verdict. Uploads made through the app also carry `uploaded_by` (the signed-in user, or `anonymous` with login off), `uploaded_at`, `uploaded_from` (client address; `X-Forwarded-For` is trusted only from loopback) and `uploaded_device` (e.g. "Windows · Chrome", "curl"); all null for files copied into the folder |
 | POST | `/api/videos/refresh` | Rescan the server folder now |
 | POST | `/api/videos/upload/check` `{filename,size}` | Pre-flight: name and disk-space check, no data sent |
 | POST | `/api/videos/upload?filename=` (raw body) | Streamed single-request upload (`Content-Length` required) |

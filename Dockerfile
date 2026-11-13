@@ -36,13 +36,16 @@ COPY deployment/mediamtx.yml deployment/mediamtx.yml
 COPY deployment/docker/entrypoint.sh /usr/local/bin/rig02-entrypoint
 # capacity ramp, runnable inside the container:  docker compose exec rig02 rig02-loadtest --help
 COPY scripts/load_test.py /app/scripts/load_test.py
+COPY scripts/manage_users.py /app/scripts/manage_users.py
 COPY --from=web /web/dist frontend/dist
 
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin rig02 \
  && mkdir -p /data/state /data/videos && chown -R rig02:rig02 /data \
  && chmod 755 /usr/local/bin/rig02-entrypoint \
  && printf '#!/bin/sh\nexec python /app/scripts/load_test.py --url "http://127.0.0.1:${PORT:-8080}" --rtsp-base rtsp://127.0.0.1:8554 "$@"\n' > /usr/local/bin/rig02-loadtest \
- && chmod 755 /usr/local/bin/rig02-loadtest
+ && chmod 755 /usr/local/bin/rig02-loadtest \
+ && printf '#!/bin/sh\nexec python /app/scripts/manage_users.py "$@"\n' > /usr/local/bin/rig02-users \
+ && chmod 755 /usr/local/bin/rig02-users
 
 ENV RTSPM_ENV_FILE=/dev/null \
     RTSPM_DATA_DIR=/data/state \

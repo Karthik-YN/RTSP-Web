@@ -83,6 +83,11 @@ class VideoOut(BaseModel):
     is_16_9: bool | None = None
     copy_720p_id: int | None = None  # the ready "(720p)" copy of this video, if any
     copy_16x9_id: int | None = None  # the ready "(720p 16x9)" copy of a non-16:9 video, if any
+    # Set when uploaded through the dashboard/API (None: copied onto the server)
+    uploaded_by: str | None = None  # user name ("anonymous" when login is off)
+    uploaded_at: datetime | None = None
+    uploaded_from: str | None = None  # client IP
+    uploaded_device: str | None = None  # e.g. "Windows · Chrome"
 
 
 class ScanOut(BaseModel):
