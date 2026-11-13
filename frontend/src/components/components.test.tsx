@@ -102,4 +102,24 @@ describe("CreateStreamDialog", () => {
     await user.type(name, "taken");
     expect(screen.getByText(/already in use/)).toBeInTheDocument();
   });
+
+  it("warns about a long keyframe interval and offers a fast-start re-encode", async () => {
+    let body: Record<string, unknown> = {};
+    mockFetch((url, init) => {
+      if (init?.method === "POST" && url.includes("/validate")) body = JSON.parse(String(init.body));
+      return okValidation;
+    });
+    const user = userEvent.setup();
+    const slow = { ...video, keyframe_interval_s: 10.4 } as Video;
+    render(<ToastProvider><CreateStreamDialog videos={[slow]} streams={[]} config={config} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
+    expect(screen.getByTestId("long-gop")).toHaveTextContent("black screen for up to 11 s");
+    await user.click(screen.getByLabelText(/Re-encode for a fast start/));
+    await waitFor(() => expect(body.force_transcode).toBe(true));
+  });
+
+  it("does not warn for a normal keyframe interval", () => {
+    mockFetch(() => okValidation);
+    render(<ToastProvider><CreateStreamDialog videos={[video]} streams={[]} config={config} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
+    expect(screen.queryByTestId("long-gop")).toBeNull();
+  });
 });

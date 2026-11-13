@@ -11,6 +11,31 @@ export interface StreamTemplate {
   videoId: number; name?: string; start?: string; end?: string; mode?: "loop" | "once"; forceTranscode?: boolean;
 }
 
+/**
+ * A video with keyframes far apart (copy mode) makes every new viewer wait for
+ * the next keyframe: up to that many seconds of black screen in VLC or on the
+ * edge. Offers to re-encode it with a keyframe every 2 s.
+ */
+export function FastStartNotice({ video, checked, onChange }: {
+  video: Video | null; checked: boolean; onChange: (on: boolean) => void;
+}) {
+  const gop = video?.keyframe_interval_s ?? 0;
+  if (!video || gop <= 4 || video.compat_mode !== "copy") return null;
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40"
+      data-testid="long-gop">
+      <p>
+        This video has a keyframe only every {gop.toFixed(1)} s, so a viewer that connects (VLC, the edge)
+        may see a black screen for up to {Math.ceil(gop)} s before the picture appears.
+      </p>
+      <label className="mt-2 flex items-center gap-2 font-medium">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        Re-encode for a fast start (a keyframe every 2 s; uses more server CPU)
+      </label>
+    </div>
+  );
+}
+
 export function CreateStreamDialog({ videos, streams, config, initialVideoId, template, onClose, onCreated }: {
   videos: Video[]; streams: Stream[]; config: AppConfig; initialVideoId?: number; template?: StreamTemplate;
   onClose: () => void; onCreated: () => void;
@@ -196,6 +221,10 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
                 <p className="mt-1 text-xs text-muted">{en.error ?? (en.seconds !== null ? `= ${formatTime(en.seconds)}` : "to the end of the file")}</p>
               </div>
             </div>
+          </div>
+
+          <div className="md:col-span-2">
+            <FastStartNotice video={video} checked={forceTranscode} onChange={setForceTranscode} />
           </div>
 
           <div className="md:col-span-2">

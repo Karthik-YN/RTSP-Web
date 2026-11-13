@@ -12,6 +12,7 @@ import {
 import { isVideoFile, useUploads } from "../components/UploadQueue";
 import { queueText } from "../components/StreamsTable";
 import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
+import { FastStartNotice } from "../components/CreateStreamDialog";
 import {
   CameraIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, PlusIcon, SearchIcon, StopIcon,
   TrashIcon, UploadIcon,
@@ -514,6 +515,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
   const [end, setEnd] = useState("");
   const [mode, setMode] = useState<"loop" | "once">("loop");
   const [startNow, setStartNow] = useState(true);
+  const [fastStart, setFastStart] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
@@ -534,7 +536,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
     setErr(null);
     try {
       const r = await api.runSlot(slot.id, { count, name_prefix: prefix, start: start.trim() || null, end: end.trim() || null,
-        mode, start_now: startNow, ...leadInBody(lead) });
+        mode, start_now: startNow, force_transcode: fastStart, ...leadInBody(lead) });
       setResult(r);
       onDone();
     } catch (e) {
@@ -620,6 +622,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
           <span className="label">Lead-in (before the video)</span>
           <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
         </div>
+        <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />
         <div>
           <div className="label">Streams to create</div>
           <div className="flex flex-wrap gap-1">
