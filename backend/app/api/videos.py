@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -167,6 +168,25 @@ def thumbnail(video_id: int, ctx: Context = Depends(get_ctx), _: User = Depends(
     if not path.is_file():
         raise HTTPException(404, "No thumbnail available.")
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/{video_id}/file")
+def video_file(video_id: int, download: bool = Query(default=False), ctx: Context = Depends(get_ctx),
+               _: User = Depends(current_user)):
+    """The video file itself: plays in the browser (HTTP Range, so seeking works) or,
+    with ``?download=true``, is saved under its own name."""
+    v = _get(ctx, video_id)
+    try:
+        path = ctx.library.lib.resolve(v.rel_path)
+    except LibraryError as exc:
+        raise _lib_error(exc)
+    if not path.is_file():
+        raise HTTPException(404, "The video file is missing on the server.")
+    name = PurePosixPath(v.rel_path).name
+    media = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media, filename=name,
+                        content_disposition_type="attachment" if download else "inline",
+                        headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/{video_id}/frame")

@@ -223,14 +223,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 class _SelectiveGZip:
-    """GZip for everything except live-preview media (already compressed video)."""
+    """GZip for everything except video (live preview and video files): already
+    compressed, and gzip would break HTTP Range requests used for seeking."""
 
     def __init__(self, app, minimum_size: int = 1024):
         self.app = app
         self.gzip = GZipMiddleware(app, minimum_size=minimum_size)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and "/live/" not in scope.get("path", ""):
+        path = scope.get("path", "")
+        if scope["type"] == "http" and "/live/" not in path and not path.endswith("/file"):
             await self.gzip(scope, receive, send)
         else:
             await self.app(scope, receive, send)

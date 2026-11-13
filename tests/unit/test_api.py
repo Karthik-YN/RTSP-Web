@@ -129,6 +129,37 @@ def test_partially_copied_file_is_not_offered(rig_factory, fixtures_dir):
         assert s["settling"] == ["copying.mp4"] and r.client.get("/api/videos").json() == []
 
 
+def test_video_file_plays_and_downloads(rig):
+    """Library Play/Download: the file itself, with Range for seeking, never gzipped."""
+    vid = rig.video_id("h264_2997.mp4")
+    data = (rig.video_dir / "h264_2997.mp4").read_bytes()
+    r = rig.client.get(f"/api/videos/{vid}/file", headers={"accept-encoding": "gzip"})
+    assert r.status_code == 200 and r.content == data
+    assert r.headers["content-type"] == "video/mp4" and r.headers["content-disposition"].startswith("inline")
+    assert "content-encoding" not in r.headers and r.headers.get("accept-ranges") == "bytes"
+
+    r = rig.client.get(f"/api/videos/{vid}/file", headers={"range": "bytes=100-199", "accept-encoding": "gzip"})
+    assert r.status_code == 206 and r.content == data[100:200]
+    assert r.headers["content-range"] == f"bytes 100-199/{len(data)}"
+
+    r = rig.client.get(f"/api/videos/{vid}/file?download=true")
+    assert r.status_code == 200 and r.content == data
+    assert r.headers["content-disposition"].startswith("attachment") and "h264_2997.mp4" in r.headers["content-disposition"]
+
+    os.unlink(rig.video_dir / "h264_2997.mp4")  # gone from disk before the next scan
+    assert rig.client.get(f"/api/videos/{vid}/file").status_code == 404
+    assert rig.client.get("/api/videos/99999/file").status_code == 404
+
+
+def test_viewer_can_play_and_download(auth_rig):
+    c = auth_rig.client
+    c.cookies.clear()
+    assert c.get("/api/videos/1/file").status_code == 401  # not signed in
+    assert c.post("/api/auth/login", json={"username": "victor", "password": "victor-pw"}).status_code == 200
+    vid = auth_rig.video_id("h264_25fps_audio.mp4")  # read-only role may still play and download
+    assert c.get(f"/api/videos/{vid}/file?download=true").status_code == 200
+
+
 # ------------------------------------------------------------------ uploads
 def test_upload_streaming_success(rig, fixtures_dir):
     data = (fixtures_dir / "h264_2997.mp4").read_bytes()

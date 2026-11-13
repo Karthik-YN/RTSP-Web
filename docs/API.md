@@ -40,6 +40,7 @@ Requests that arrive through Cloudflare (a `Cf-Ray` / `Cf-Connecting-Ip` header)
 | GET/DELETE | `/api/videos/uploads/{id}` | Ask the current offset (after a dropped connection) / abort and release the space |
 | DELETE | `/api/videos/{id}` | **Admin**: move to `.trash` (purged after 7 days); 409 while any stream uses it |
 | GET | `/api/videos/{id}` · `/thumbnail` · `/frame?t=` | Metadata, thumbnail, frame at time *t* (JPEG) |
+| GET | `/api/videos/{id}/file` · `?download=true` | The video file: plays in the browser (HTTP Range, seekable) or downloads under its own name. Any signed-in role, viewers included |
 | GET | `/api/streams` | All streams with live runtime (status, path ready, viewers with host names, `viewer_peak_today`, `preview_watchers`, loops, progress, `start_queue` {position, eta_s} while queued for a start slot, `spacing_warning`, `lead_in` {mode, phase, video_in_s, viewer_seen_at, viewer} during a lead-in, `slate_on_url`); statuses include `LEAD_IN` and `WAITING_FOR_VIEWER` |
 | POST | `/api/streams/validate` | Dry run of a create: effective (keyframe) start/end, output mode, warnings |
 | POST | `/api/streams[?wait=true]` | Create (and start unless `start_now:false`); optional `slot_id` links it to an analytics video placeholder; `lead_in_mode` (`none`/`fixed`/`hold`, default from `RTSPM_DEFAULT_LEAD_IN_MODE`), `lead_in_s` (0–120), `hold_max_s`. `?wait=true` waits through a fixed lead-in; a hold stream returns `WAITING_FOR_VIEWER` |

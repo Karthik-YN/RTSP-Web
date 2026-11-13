@@ -3,8 +3,8 @@ import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
 import { formatBytes, formatTime } from "../lib/format";
 import type { User, Video } from "../types/api";
-import { ConfirmDialog, Pill, Spinner, useToast } from "./common";
-import { CameraIcon, FilmIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
+import { ConfirmDialog, Modal, Pill, Spinner, useToast } from "./common";
+import { CameraIcon, DownloadIcon, FilmIcon, PlayIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
 export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
   videos: Video[]; loading: boolean; user: User | null; onChanged: () => void;
@@ -96,16 +96,54 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
   );
 }
 
+/** The video file on the server: plays in the browser, or downloads with its own name. */
+export function videoFileUrl(id: number, download = false): string {
+  return `/api/videos/${id}/file${download ? "?download=true" : ""}`;
+}
+
+/** Browsers play H.264 (and usually VP9/AV1); H.265 and 10-bit often not. */
+function browserMayNotPlay(v: Video): boolean {
+  const codec = (v.video_codec ?? "").toLowerCase();
+  return codec === "hevc" || codec === "h265" || (v.bit_depth ?? 8) > 8;
+}
+
+export function VideoPlayer({ v, onClose }: { v: Video; onClose: () => void }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <Modal title={v.filename} wide onClose={onClose}>
+      {failed ? (
+        <div className="space-y-2 text-sm">
+          <p>This browser can't play this file ({v.video_codec}{v.bit_depth && v.bit_depth > 8 ? `, ${v.bit_depth}-bit` : ""}).</p>
+          <p className="text-muted">Download it and open it in VLC. It can still be streamed: the server converts it for RTSP.</p>
+        </div>
+      ) : (
+        <video data-testid="video-player" className="max-h-[70vh] w-full rounded bg-black" src={videoFileUrl(v.id)}
+          controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} />
+      )}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}{browserMayNotPlay(v) && !failed
+          ? " · may not play in every browser" : ""}</span>
+        <a className="btn-secondary" href={videoFileUrl(v.id, true)} download={v.filename}><DownloadIcon /> Download</a>
+      </div>
+    </Modal>
+  );
+}
+
 function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
 }) {
   const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
+  const [playing, setPlaying] = useState(false);
   return (
     <div className="card flex flex-col overflow-hidden">
-      <div className="relative aspect-video bg-slate-800">
+      <div className="group relative aspect-video bg-slate-800">
         {v.thumbnail_url
           ? <img src={v.thumbnail_url} alt="" loading="lazy" className="h-full w-full object-contain" />
           : <div className="flex h-full items-center justify-center"><FilmIcon className="h-8 w-8 text-muted" /></div>}
+        <button className="absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/30"
+          onClick={() => setPlaying(true)} aria-label={`Play ${v.filename}`} title="Play in the browser">
+          <span className="rounded-full bg-black/60 p-3 text-white opacity-80 group-hover:opacity-100"><PlayIcon className="h-6 w-6" /></span>
+        </button>
         <span className="absolute bottom-1.5 right-1.5 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white">
           {formatTime(v.duration_s, false)}
         </span>
@@ -130,17 +168,20 @@ function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
           {v.audio_codec && <Pill tone="muted">audio dropped</Pill>}
           {v.keyframe_interval_s && v.keyframe_interval_s > 4 && <Pill tone="warn">long GOP</Pill>}
         </div>
-        {canWrite && (
-          <div className="mt-auto flex gap-1.5">
-            <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
-            {isAdmin && (
-              <button className="btn-secondary px-2 text-red-600 dark:text-red-400" onClick={() => onDelete(v)}
-                disabled={v.streams_using > 0} title={v.streams_using > 0 ? "Used by a stream" : "Delete video (admin)"}
-                aria-label={`Delete ${v.filename}`}><TrashIcon /></button>
-            )}
-          </div>
-        )}
+        <div className="mt-auto flex gap-1.5">
+          {canWrite
+            ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
+            : <button className="btn-secondary flex-1" onClick={() => setPlaying(true)}><PlayIcon /> Play</button>}
+          <a className="btn-secondary px-2" href={videoFileUrl(v.id, true)} download={v.filename}
+            title="Download to this computer" aria-label={`Download ${v.filename}`}><DownloadIcon /></a>
+          {canWrite && isAdmin && (
+            <button className="btn-secondary px-2 text-red-600 dark:text-red-400" onClick={() => onDelete(v)}
+              disabled={v.streams_using > 0} title={v.streams_using > 0 ? "Used by a stream" : "Delete video (admin)"}
+              aria-label={`Delete ${v.filename}`}><TrashIcon /></button>
+          )}
+        </div>
       </div>
+      {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} />}
     </div>
   );
 }
