@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
 import { formatBytes, formatTime } from "../lib/format";
@@ -67,7 +67,7 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
         {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
           onCreateStream={onCreateStream} onDelete={setDeleting} job={conv.activeFor(v.id)}
-          onConvert={() => conv.start(v)} onCancel={(j) => conv.cancel(j)} />)}
+          onConvert={conv.start} onCancel={conv.cancel} />)}
       </div>
 
       {deleting && (
@@ -135,26 +135,28 @@ export function useConversions(onChanged: () => void) {
     const t = setInterval(load, 2000);
     return () => clearInterval(t);
   }, [busy, load]);
+  /** Starts a conversion; resolves to the error message, or null when it started. */
+const start = useCallback(async (v: Video): Promise<string | null> => {
+    try {
+      const j = await api.convertVideo(v.id);
+      seen.current[j.id] = j.state;
+      setJobs((cur) => [j, ...cur]);
+      toast("info", `Converting ${v.filename} to H.264 in the background; the original is kept.`);
+      return null;
+    } catch (e) {
+      const msg = (e as ApiError).message;
+      toast("bad", msg);
+      return msg;
+    }
+  }, [toast]);
+  const cancel = useCallback(async (j: Conversion) => {
+    try { await api.cancelConversion(j.id); await load(); } catch (e) { toast("bad", (e as ApiError).message); }
+  }, [load, toast]);
   return {
     jobs,
     activeFor: (videoId: number) => jobs.find((j) => j.video_id === videoId && (j.state === "queued" || j.state === "running")),
-    /** Starts a conversion; resolves to the error message, or null when it started. */
-    start: async (v: Video): Promise<string | null> => {
-      try {
-        const j = await api.convertVideo(v.id);
-        seen.current[j.id] = j.state;
-        setJobs((cur) => [j, ...cur]);
-        toast("info", `Converting ${v.filename} to H.264 in the background; the original is kept.`);
-        return null;
-      } catch (e) {
-        const msg = (e as ApiError).message;
-        toast("bad", msg);
-        return msg;
-      }
-    },
-    cancel: async (j: Conversion) => {
-      try { await api.cancelConversion(j.id); await load(); } catch (e) { toast("bad", (e as ApiError).message); }
-    },
+    start,
+    cancel,
   };
 }
 
@@ -221,19 +223,23 @@ export function VideoPlayer({ v, onClose, onConvert, job }: {
   );
 }
 
-function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert, onCancel }: {
+/** Memoised: the library re-renders on every poll, a card only when its own video or job changes. */
+const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel }: {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
-  job?: Conversion; onConvert: () => Promise<string | null>; onCancel: (j: Conversion) => void;
+  job?: Conversion; onConvert: (v: Video) => Promise<string | null>; onCancel: (j: Conversion) => void;
 }) {
+  const onConvert = () => convertVideo(v);
   const reasons = v.convert_reasons ?? [];
   const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
   const [playing, setPlaying] = useState(false);
   return (
-    <div className="card flex flex-col overflow-hidden">
-      <div className="group relative aspect-video bg-slate-800">
+    <div className="card flex flex-col overflow-hidden" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 22rem" }}>
+      {/* Fixed 16:9 box: portrait and 4:3 thumbnails are letterboxed inside it, so every card has the same height. */}
+      <div className="group relative aspect-video shrink-0 overflow-hidden bg-slate-900" data-testid="thumb-box">
         {v.thumbnail_url
-          ? <img src={v.thumbnail_url} alt="" loading="lazy" className="h-full w-full object-contain" />
-          : <div className="flex h-full items-center justify-center"><FilmIcon className="h-8 w-8 text-muted" /></div>}
+          ? <img src={v.thumbnail_url} alt="" loading="lazy" decoding="async"
+              className="absolute inset-0 h-full w-full object-contain" />
+          : <div className="absolute inset-0 flex items-center justify-center"><FilmIcon className="h-8 w-8 text-muted" /></div>}
         <button className="absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/30"
           onClick={() => setPlaying(true)} aria-label={`Play ${v.filename}`} title="Play in the browser">
           <span className="rounded-full bg-black/60 p-3 text-white opacity-80 group-hover:opacity-100"><PlayIcon className="h-6 w-6" /></span>
@@ -248,7 +254,7 @@ function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConv
         )}
       </div>
       <div className="flex flex-1 flex-col gap-1.5 p-3">
-        <div className="break-all text-sm font-medium leading-snug" title={v.rel_path}>{v.rel_path}</div>
+        <div className="line-clamp-2 break-words text-sm font-medium leading-snug" title={v.rel_path}>{v.rel_path}</div>
         <div className="flex flex-wrap gap-x-2 text-xs text-muted">
           <span>{v.width}×{v.height}</span>
           <span>{v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")} fps` : "–"}</span>
@@ -287,7 +293,7 @@ function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConv
         onConvert={canWrite && reasons.length > 0 ? onConvert : undefined} />}
     </div>
   );
-}
+});
 
 function UploadButton({ onDone: _onDone }: { onDone: () => void }) {
   // Uploads run in the app-wide queue (bottom-right panel), so they keep going while you

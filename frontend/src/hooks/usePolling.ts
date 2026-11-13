@@ -13,13 +13,20 @@ export function usePolling<T>(loader: () => Promise<T>, intervalMs: number, deps
   const loaderRef = useRef(loader);
   loaderRef.current = loader;
   const seq = useRef(0);
+  // Same payload as last time: keep the old object, so nothing re-renders
+  // (the dashboard polls every 2 s; most polls change nothing).
+  const last = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const my = ++seq.current;
     try {
       const d = await loaderRef.current();
       if (my === seq.current) {
-        setData(d);
+        const json = JSON.stringify(d);
+        if (json !== last.current) {
+          last.current = json;
+          setData(d);
+        }
         setError(null);
       }
     } catch (e) {

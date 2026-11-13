@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { api, ApiError } from "../services/api";
 import { useRig } from "../hooks/useRigData";
@@ -37,8 +37,10 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
   const live = rig.streams?.filter((s) => s.status === "RUNNING").length ?? 0;
   useEffect(() => { document.title = `${live} live · RIG-02`; }, [live]);
 
+  const create = useCallback((videoId?: number, template?: StreamTemplate) => setCreating({ videoId, template }), []);
+
   return (
-    <CreateCtx.Provider value={(videoId, template) => setCreating({ videoId, template })}>
+    <CreateCtx.Provider value={create}>
       <div className="flex min-h-screen">
         <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
         <div className="flex min-w-0 flex-1 flex-col">

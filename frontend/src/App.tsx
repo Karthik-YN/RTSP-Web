@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { api, ApiError, setUnauthorizedHandler } from "./services/api";
 import type { AppConfig, User } from "./types/api";
@@ -8,13 +8,15 @@ import { UploadQueueProvider } from "./components/UploadQueue";
 import { RigDataProvider, useRig } from "./hooks/useRigData";
 import { useTheme } from "./lib/theme";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
-import { EventsPage } from "./pages/EventsPage";
-import { HealthPage } from "./pages/HealthPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { Login } from "./pages/Login";
-import { StreamPage } from "./pages/StreamPage";
+
+// Pages that are opened less often load on demand, keeping the first load small.
+const EventsPage = lazy(() => import("./pages/EventsPage").then((m) => ({ default: m.EventsPage })));
+const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
+const StreamPage = lazy(() => import("./pages/StreamPage").then((m) => ({ default: m.StreamPage })));
+const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
 import { StreamsPage } from "./pages/StreamsPage";
-import { UsersPage } from "./pages/UsersPage";
 
 export default function App() {
   useTheme(); // applies the saved light/dark preference
@@ -65,6 +67,7 @@ export default function App() {
           <RigDataProvider user={user} config={config}>
             <Uploads>
             <AppShell onLogout={logout}>
+              <Suspense fallback={<div className="p-6"><Spinner /></div>}>
               <Routes>
                 <Route path="/" element={<Navigate to="/streams" replace />} />
                 <Route path="/streams" element={<StreamsPage />} />
@@ -76,6 +79,7 @@ export default function App() {
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="*" element={<Navigate to="/streams" replace />} />
               </Routes>
+              </Suspense>
             </AppShell>
             </Uploads>
           </RigDataProvider>

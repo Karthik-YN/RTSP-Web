@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import { Spinner } from "./common";
 
 type State = "connecting" | "playing" | "error";
@@ -34,10 +34,12 @@ export function LivePlayer({ streamId, className = "" }: { streamId: number; cla
     const slowTimer = setTimeout(() => setSlow(true), 7000);
     el.addEventListener("playing", onPlaying);
 
+    // hls.js is about 500 kB: load it only when a live preview is actually opened.
+    let Hls: typeof import("hls.js").default | null = null;
     function start() {
       if (closed || !el) return;
       hls?.destroy();
-      if (Hls.isSupported()) {
+      if (Hls?.isSupported()) {
         // the server holds the first playlist until 3 segments exist (up to ~30 s for long keyframe intervals)
         hls = new Hls({ liveSyncDurationCount: 2, manifestLoadingTimeOut: 60000, levelLoadingTimeOut: 30000,
           fragLoadingTimeOut: 60000, backBufferLength: 30 });
@@ -58,7 +60,9 @@ export function LivePlayer({ streamId, className = "" }: { streamId: number; cla
         setState("error");
       }
     }
-    start();
+    import("hls.js")
+      .then((m) => { Hls = m.default; start(); })
+      .catch(() => start()); // Safari can still play natively
 
     return () => {
       closed = true;
