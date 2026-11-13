@@ -1,9 +1,9 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
 import { formatBytes, formatTime } from "../lib/format";
-import type { User, Video } from "../types/api";
-import { ConfirmDialog, Modal, Pill, Spinner, useToast } from "./common";
+import type { Conversion, User, Video } from "../types/api";
+import { ConfirmDialog, ErrorBox, Modal, Pill, Spinner, useToast } from "./common";
 import { CameraIcon, DownloadIcon, FilmIcon, PlayIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
 export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
@@ -26,6 +26,8 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       setRefreshing(false);
     }
   };
+
+  const conv = useConversions(onChanged);
 
   const [deleting, setDeleting] = useState<Video | null>(null);
   const usable = videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject");
@@ -64,7 +66,8 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
 
       <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
         {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
-          onCreateStream={onCreateStream} onDelete={setDeleting} />)}
+          onCreateStream={onCreateStream} onDelete={setDeleting} job={conv.activeFor(v.id)}
+          onConvert={() => conv.start(v)} onCancel={(j) => conv.cancel(j)} />)}
       </div>
 
       {deleting && (
@@ -101,37 +104,128 @@ export function videoFileUrl(id: number, download = false): string {
   return `/api/videos/${id}/file${download ? "?download=true" : ""}`;
 }
 
-/** Browsers play H.264 (and usually VP9/AV1); H.265 and 10-bit often not. */
-function browserMayNotPlay(v: Video): boolean {
-  const codec = (v.video_codec ?? "").toLowerCase();
-  return codec === "hevc" || codec === "h265" || (v.bit_depth ?? 8) > 8;
+/**
+ * "Convert to H.264" jobs: start, cancel, and follow progress (polled every 2 s
+ * while one is queued or running). Finished jobs refresh the library.
+ */
+export function useConversions(onChanged: () => void) {
+  const toast = useToast();
+  const [jobs, setJobs] = useState<Conversion[]>([]);
+  const seen = useRef<Record<string, Conversion["state"]>>({});
+  const load = useCallback(async () => {
+    try {
+      const list = await api.conversions();
+      let changed = false;
+      for (const j of list) {
+        const before = seen.current[j.id];
+        if (before && before !== j.state && (before === "queued" || before === "running")) {
+          if (j.state === "done") { toast("ok", `Converted: ${j.target} is in the library`); changed = true; }
+          if (j.state === "failed") toast("bad", j.error ?? `Converting ${j.source} failed`);
+        }
+        seen.current[j.id] = j.state;
+      }
+      setJobs(list);
+      if (changed) onChanged();
+    } catch { /* keep the last list */ }
+  }, [onChanged, toast]);
+  const busy = jobs.some((j) => j.state === "queued" || j.state === "running");
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [busy, load]);
+  return {
+    jobs,
+    activeFor: (videoId: number) => jobs.find((j) => j.video_id === videoId && (j.state === "queued" || j.state === "running")),
+    /** Starts a conversion; resolves to the error message, or null when it started. */
+    start: async (v: Video): Promise<string | null> => {
+      try {
+        const j = await api.convertVideo(v.id);
+        seen.current[j.id] = j.state;
+        setJobs((cur) => [j, ...cur]);
+        toast("info", `Converting ${v.filename} to H.264 in the background; the original is kept.`);
+        return null;
+      } catch (e) {
+        const msg = (e as ApiError).message;
+        toast("bad", msg);
+        return msg;
+      }
+    },
+    cancel: async (j: Conversion) => {
+      try { await api.cancelConversion(j.id); await load(); } catch (e) { toast("bad", (e as ApiError).message); }
+    },
+  };
 }
 
-export function VideoPlayer({ v, onClose }: { v: Video; onClose: () => void }) {
+function formatEta(s: number | null): string {
+  if (s === null) return "";
+  return s < 60 ? ` · ~${s} s left` : ` · ~${Math.round(s / 60)} min left`;
+}
+
+export function ConversionProgress({ job, onCancel }: { job: Conversion; onCancel?: (j: Conversion) => void }) {
+  const pct = Math.round(job.progress * 100);
+  return (
+    <div className="space-y-1" data-testid="conversion-progress">
+      <div className="flex items-center justify-between text-xs">
+        <span>{job.state === "queued" ? "Waiting to convert…" : `Converting to H.264: ${pct}%${formatEta(job.eta_s)}`}</span>
+        {onCancel && <button className="btn-ghost btn-xs" onClick={() => onCancel(job)}>Cancel</button>}
+      </div>
+      <div className="h-1.5 overflow-hidden rounded bg-surface-2">
+        <div className="h-full bg-brand transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** Plays the file in the browser; for formats browsers can't play, offers the H.264 copy or a download. */
+export function VideoPlayer({ v, onClose, onConvert, job }: {
+  v: Video; onClose: () => void; onConvert?: () => Promise<string | null> | void; job?: Conversion;
+}) {
   const [failed, setFailed] = useState(false);
+  const [convertErr, setConvertErr] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const convert = async () => {
+    if (!onConvert) return;
+    setStarting(true);
+    setConvertErr((await onConvert()) ?? null);
+    setStarting(false);
+  };
+  const unplayable = v.browser_playable === false || failed;
   return (
     <Modal title={v.filename} wide onClose={onClose}>
-      {failed ? (
-        <div className="space-y-2 text-sm">
-          <p>This browser can't play this file ({v.video_codec}{v.bit_depth && v.bit_depth > 8 ? `, ${v.bit_depth}-bit` : ""}).</p>
-          <p className="text-muted">Download it and open it in VLC. It can still be streamed: the server converts it for RTSP.</p>
+      {unplayable ? (
+        <div className="space-y-3 text-sm" data-testid="not-playable">
+          <p>{v.browser_note ?? `This browser can't play this file (${v.video_codec}).`}</p>
+          <p className="text-muted">
+            It still streams over RTSP. To watch it here, convert it once to H.264: the copy plays in every browser,
+            streams without live transcoding and starts within 2 s. The original is kept.
+          </p>
+          {job ? <ConversionProgress job={job} />
+            : onConvert && (
+              <button className="btn-primary" onClick={convert} disabled={starting}>
+                {starting ? <Spinner /> : <RefreshIcon />} Convert to H.264
+              </button>
+            )}
+          {convertErr && !job && <ErrorBox>{convertErr}</ErrorBox>}
         </div>
       ) : (
         <video data-testid="video-player" className="max-h-[70vh] w-full rounded bg-black" src={videoFileUrl(v.id)}
           controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} />
       )}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}{browserMayNotPlay(v) && !failed
-          ? " · may not play in every browser" : ""}</span>
+        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}</span>
         <a className="btn-secondary" href={videoFileUrl(v.id, true)} download={v.filename}><DownloadIcon /> Download</a>
       </div>
     </Modal>
   );
 }
 
-function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
+function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert, onCancel }: {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
+  job?: Conversion; onConvert: () => Promise<string | null>; onCancel: (j: Conversion) => void;
 }) {
+  const reasons = v.convert_reasons ?? [];
   const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
   const [playing, setPlaying] = useState(false);
   return (
@@ -167,7 +261,15 @@ function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
           {v.is_vfr && <Pill tone="info">VFR</Pill>}
           {v.audio_codec && <Pill tone="muted">audio dropped</Pill>}
           {v.keyframe_interval_s && v.keyframe_interval_s > 4 && <Pill tone="warn">long GOP</Pill>}
+          {v.browser_playable === false && <Pill tone="muted" title={v.browser_note ?? undefined}>plays in VLC only</Pill>}
         </div>
+        {job ? <ConversionProgress job={job} onCancel={canWrite ? onCancel : undefined} />
+          : canWrite && reasons.length > 0 && (
+            <button className="btn-secondary w-full" onClick={onConvert} title={reasons.join("\n")}
+              aria-label={`Convert ${v.filename} to H.264`}>
+              <RefreshIcon /> Convert to H.264
+            </button>
+          )}
         <div className="mt-auto flex gap-1.5">
           {canWrite
             ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
@@ -181,7 +283,8 @@ function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete }: {
           )}
         </div>
       </div>
-      {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} />}
+      {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} job={job}
+        onConvert={canWrite && reasons.length > 0 ? onConvert : undefined} />}
     </div>
   );
 }

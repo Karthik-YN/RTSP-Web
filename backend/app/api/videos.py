@@ -11,6 +11,7 @@ from starlette.requests import ClientDisconnect
 from ..models import Stream, Video
 from ..schemas import ScanOut, UploadCheckIn, UploadCheckOut, VideoOut
 from ..services.auth import User
+from ..services.converter import browser_playback, convert_reasons
 from ..services.ffprobe_service import ProbeError
 from ..services.file_manager import LibraryError
 from .deps import Context, current_user, get_ctx, require_admin, require_operator
@@ -18,7 +19,9 @@ from .deps import Context, current_user, get_ctx, require_admin, require_operato
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
-def video_out(v: Video, streams_using: int = 0) -> VideoOut:
+def video_out(v: Video, streams_using: int = 0, converter=None) -> VideoOut:
+    playable, note = browser_playback(v)
+    job = converter.active_for(v.id) if converter is not None else None
     return VideoOut(
         id=v.id, rel_path=v.rel_path, filename=PurePosixPath(v.rel_path).name, size_bytes=v.size_bytes,
         status=v.status, error=v.error, container=v.container, duration_s=v.duration_s, width=v.width,
@@ -28,6 +31,8 @@ def video_out(v: Video, streams_using: int = 0) -> VideoOut:
         compat_reasons=v.compat_reasons or [], compat_warnings=v.compat_warnings or [],
         thumbnail_url=f"/api/videos/{v.id}/thumbnail?h={v.quick_hash[:8]}" if v.thumbnail else None,
         streams_using=streams_using, updated_at=v.updated_at, last_seen_at=v.last_seen_at,
+        browser_playable=playable, browser_note=note, convert_reasons=convert_reasons(v),
+        converting=job.view() if job else None,
     )
 
 
@@ -53,7 +58,7 @@ def list_videos(search: str | None = Query(default=None, max_length=200),
             q = q.where(Video.status != "MISSING")
         videos = list(s.scalars(q))
         usage = dict(s.execute(select(Stream.video_id, func.count()).group_by(Stream.video_id)).all())
-    return [video_out(v, usage.get(v.id, 0)) for v in videos]
+    return [video_out(v, usage.get(v.id, 0), ctx.library.converter) for v in videos]
 
 
 @router.post("/refresh", response_model=ScanOut)
@@ -141,6 +146,33 @@ def abort_upload(session_id: str, ctx: Context = Depends(get_ctx), _: User = Dep
     return Response(status_code=204)
 
 
+@router.get("/conversions")
+def list_conversions(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
+    """Recent and running "Convert to H.264" jobs, newest first."""
+    return ctx.library.converter.list()
+
+
+@router.delete("/conversions/{job_id}")
+async def cancel_conversion(job_id: str, ctx: Context = Depends(get_ctx), _: User = Depends(require_operator)):
+    try:
+        job = await ctx.library.converter.cancel(job_id)
+    except LibraryError as exc:
+        raise _lib_error(exc)
+    return job.view()
+
+
+@router.post("/{video_id}/convert", status_code=202)
+async def convert_video(video_id: int, ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
+    """Make a universal H.264 copy, ``<name> (h264).mp4``, next to the original (which is kept):
+    plays in every browser, streams without live transcoding, first picture within 2 s.
+    Runs in the background; follow it with ``GET /api/videos/conversions``."""
+    try:
+        job = ctx.library.converter.start(video_id, user.username)
+    except LibraryError as exc:
+        raise _lib_error(exc)
+    return job.view()
+
+
 @router.delete("/{video_id}", status_code=200)
 async def delete_video(video_id: int, ctx: Context = Depends(get_ctx), admin: User = Depends(require_admin)):
     """Admin: move a video to the library's .trash (purged after RTSPM_TRASH_DAYS). Refused while in use."""
@@ -156,7 +188,7 @@ def get_video(video_id: int, ctx: Context = Depends(get_ctx), _: User = Depends(
     v = _get(ctx, video_id)
     with ctx.db.session() as s:
         n = s.scalar(select(func.count()).select_from(Stream).where(Stream.video_id == video_id)) or 0
-    return video_out(v, n)
+    return video_out(v, n, ctx.library.converter)
 
 
 @router.get("/{video_id}/thumbnail")

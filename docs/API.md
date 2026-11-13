@@ -41,6 +41,9 @@ Requests that arrive through Cloudflare (a `Cf-Ray` / `Cf-Connecting-Ip` header)
 | DELETE | `/api/videos/{id}` | **Admin**: move to `.trash` (purged after 7 days); 409 while any stream uses it |
 | GET | `/api/videos/{id}` · `/thumbnail` · `/frame?t=` | Metadata, thumbnail, frame at time *t* (JPEG) |
 | GET | `/api/videos/{id}/file` · `?download=true` | The video file: plays in the browser (HTTP Range, seekable) or downloads under its own name. Any signed-in role, viewers included |
+| POST | `/api/videos/{id}/convert` | Operator: make a universal H.264 copy `<name> (h264).mp4` next to the original (kept). Plays in every browser, streams without live transcoding, keyframe every 2 s. Background job (202); 409 if running, already converted or a converted copy; 507 if the disk is too full |
+| GET | `/api/videos/conversions` | Recent and running conversions: state (queued, running, done, failed, cancelled), progress 0–1, eta_s, error, result_video_id |
+| DELETE | `/api/videos/conversions/{job}` | Operator: cancel a conversion (temp file removed) |
 | GET | `/api/streams` | All streams with live runtime (status, path ready, viewers with host names, `viewer_peak_today`, `preview_watchers`, loops, progress, `start_queue` {position, eta_s} while queued for a start slot, `spacing_warning`, `lead_in` {mode, phase, video_in_s, viewer_seen_at, viewer} during a lead-in, `slate_on_url`); statuses include `LEAD_IN` and `WAITING_FOR_VIEWER` |
 | POST | `/api/streams/validate` | Dry run of a create: effective (keyframe) start/end, output mode, warnings |
 | POST | `/api/streams[?wait=true]` | Create (and start unless `start_now:false`); optional `slot_id` links it to an analytics video placeholder; `lead_in_mode` (`none`/`fixed`/`hold`, default from `RTSPM_DEFAULT_LEAD_IN_MODE`), `lead_in_s` (0–120), `hold_max_s`. `?wait=true` waits through a fixed lead-in; a hold stream returns `WAITING_FOR_VIEWER` |

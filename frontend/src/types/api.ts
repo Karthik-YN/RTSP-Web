@@ -133,6 +133,12 @@ export interface Video {
   compat_mode: "copy" | "transcode" | "reject" | null;
   compat_reasons: string[];
   compat_warnings: string[];
+  /** Plays in current browsers (false: MPEG-4 Part 2, H.265, 10-bit, MKV/AVI…). */
+  browser_playable?: boolean;
+  browser_note?: string | null;
+  /** Why "Convert to H.264" would help; empty when it would not. */
+  convert_reasons?: string[];
+  converting?: Conversion | null;
   thumbnail_url: string | null;
   streams_using: number;
   updated_at: string;
@@ -382,4 +388,19 @@ export interface RunResult {
   created: Stream[];
   errors: { name: string; error: string }[];
   skipped: string[];
+}
+
+export interface Conversion {
+  id: string;
+  video_id: number;
+  source: string;
+  target: string;
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  progress: number;
+  eta_s: number | null;
+  error: string | null;
+  result_video_id: number | null;
+  username: string | null;
+  created_at: string;
+  finished_at: string | null;
 }

@@ -1,4 +1,5 @@
 import type {
+  Conversion,
   AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, HealthReport, LeadInMode, MediaMTXStatus, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
 } from "../types/api";
 
@@ -191,6 +192,9 @@ export const api = {
   bulk: (stream_ids: number[], action: "start" | "stop" | "restart" | "delete") =>
     request<BulkResult>("POST", "/api/streams/bulk", { stream_ids, action }),
   deleteVideo: (id: number) => request<{ message: string }>("DELETE", `/api/videos/${id}`),
+  convertVideo: (id: number) => request<Conversion>("POST", `/api/videos/${id}/convert`),
+  conversions: () => request<Conversion[]>("GET", "/api/videos/conversions"),
+  cancelConversion: (jobId: string) => request<Conversion>("DELETE", `/api/videos/conversions/${jobId}`),
   analyticsTree: () => request<AnalyticsCategory[]>("GET", "/api/analytics"),
   analytics: (id: number) => request<AnalyticsDetail>("GET", `/api/analytics/${id}`),
   createAnalytics: (name: string, category_id: number, description?: string) =>

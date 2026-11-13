@@ -73,6 +73,10 @@ class VideoOut(BaseModel):
     streams_using: int = 0
     updated_at: datetime
     last_seen_at: datetime
+    browser_playable: bool = True
+    browser_note: str | None = None
+    convert_reasons: list[str] = []
+    converting: dict | None = None  # the running/queued conversion job, if any
 
 
 class ScanOut(BaseModel):

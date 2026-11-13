@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # List settings accept "a,b,c" in env files; NoDecode stops pydantic-settings
@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     transcode_max_height: int = 1080
     output_fps_mode: Literal["passthrough", "cfr"] = "passthrough"
     x264_threads: int = 0  # 0 = libx264 decides
+    # "Convert to H.264" in the library: one-off, quality over speed, low priority
+    convert_preset: str = "medium"
+    convert_crf: int = Field(default=20, ge=0, le=51)
+    convert_concurrency: int = Field(default=1, ge=1, le=8)
+    convert_threads: int = Field(default=0, ge=0, le=64)  # 0 = libx264 decides
 
     # --------------------------------------------------------- stream policy
     stream_name_pattern: str = r"^[A-Za-z0-9_-]{1,64}$"

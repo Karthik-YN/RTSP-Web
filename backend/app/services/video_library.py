@@ -39,6 +39,8 @@ class VideoLibrary:
         self.last_scan_at = None
         self.last_scan_summary: dict = {}
         self._sessions: dict[str, dict] = {}
+        from .converter import Converter
+        self.converter = Converter(self)
 
     # ---------------------------------------------------------- compat
     def compat_for(self, meta: dict, force_transcode: bool = False) -> compatibility.CompatResult:
@@ -82,11 +84,12 @@ class VideoLibrary:
         with self.db.session() as s:
             rows = {v.rel_path: v for v in s.scalars(select(Video))}
         by_inode = {(st.st_dev, st.st_ino): rel for rel, st in on_disk.items()}
+        settling_now = set(settling)  # still being written: neither missing nor re-probed yet
 
         # rows whose file disappeared: renamed (same inode) or missing
         claimed: set[str] = set()
         for rel, v in list(rows.items()):
-            if rel in on_disk:
+            if rel in on_disk or rel in settling_now:
                 continue
             new_rel = by_inode.get((v.device, v.inode))
             if (new_rel and new_rel not in rows and new_rel not in claimed
@@ -219,6 +222,7 @@ class VideoLibrary:
         self._task = asyncio.create_task(self.run(), name="library-scanner")
 
     async def stop(self) -> None:
+        await self.converter.stop()
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
