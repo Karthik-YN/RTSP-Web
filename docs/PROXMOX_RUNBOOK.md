@@ -41,6 +41,7 @@ To update later: make a new bundle, then run `git pull ~/rig02.bundle <branch>` 
 cp .env.example .env
 nano .env
 #   RTSPM_PUBLIC_RTSP_HOST=192.168.29.105     (or the DNS name IT gives the VM)
+#   RTSPM_RTSP_ALT_HOSTS=100.102.25.112       (the Tailscale address: any network)
 #   RIG02_HTTP_PORT=8080  RIG02_RTSP_PORT=8554 (only if the defaults are taken)
 ```
 
@@ -76,6 +77,15 @@ docker compose ps                    # rig02 … (healthy) within ~40 s
 ```
 
 Open `http://192.168.29.105:8080`, or the port you chose.
+
+Make it run continuously, through reboots:
+
+```bash
+sudo systemctl enable docker tailscaled   # start on boot (the container has restart: unless-stopped)
+tailscale ip -4                           # 100.102.25.112 here = reachable from every network
+```
+
+From a laptop on **another** network (the 1 Wi-Fi, home, phone data) with Tailscale signed in, open `http://100.102.25.112:8080` and play `rtsp://100.102.25.112:8554/<name>` in VLC. Details: DEPLOYMENT.md "From any network with Tailscale".
 
 ## 5. Health test
 
@@ -129,7 +139,7 @@ sudo reboot
 curl -s http://127.0.0.1:8080/api/system/recovery | python3 -m json.tool
 ```
 
-`all_ready_after_boot_s` must be ≤ 120.
+`all_ready_after_boot_s` must be ≤ 120. Also check that the dashboard opens again on `http://100.102.25.112:8080` without anyone logging in to the server.
 
 **Send back:** that JSON.
 

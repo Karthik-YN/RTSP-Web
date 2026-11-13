@@ -66,7 +66,7 @@ Each router does NAT, so connections only work **upwards**. A device reaches its
 | 192.168.29.x (the VM: 192.168.29.105) | yes | yes | **no** (unless port forwarding, below) |
 | 192.168.1.x | yes | yes | yes |
 
-No app setting can change this. So:
+No app setting can change this, but **Tailscale (next section) bypasses it**: the server's Tailscale address works from every network. Otherwise:
 
 * Use the server's address on the **highest** network it is on as `RTSPM_PUBLIC_RTSP_HOST`. For the VM on 29 that is `192.168.29.105`, which works from the 68 and 29 Wi-Fis.
 * For the **1 network** as well, choose one:
@@ -82,6 +82,39 @@ What to ask IT for:
 1. A DHCP reservation (or a static IP) for the VM NIC's MAC address.
 2. A DNS A-record, for example `rig02.<company-domain>`, resolvable from the office LANs and the VPN.
 3. Firewall: TCP 8554 and 8080 from the office subnets and the VPN range to the VM.
+
+### From any network with Tailscale (recommended for the office)
+
+Tailscale gives the server one more address (here `100.102.25.112`) that every device **signed in to your tailnet** reaches from anywhere: the 1, 29 and 68 Wi-Fis, home, mobile data. Unlike a web tunnel it carries **both** the dashboard and RTSP, so VLC and ffprobe work over it too. Nothing is opened to the public internet, and no router has to change.
+
+On the server that runs Docker (one-time; Tailscale is already installed there if `tailscale ip -4` prints the 100.x address):
+
+```bash
+tailscale ip -4                              # must print 100.102.25.112 on THIS machine
+sudo systemctl enable --now tailscaled docker   # both start on every boot
+```
+
+In `.env`, keep the LAN address as the main one (the edge uses it) and add the Tailscale one:
+
+```
+RTSPM_PUBLIC_RTSP_HOST=192.168.29.105
+RTSPM_RTSP_ALT_HOSTS=100.102.25.112
+```
+
+Then `docker compose up -d`. Docker publishes 8080 and 8554 on every interface, Tailscale's included, so nothing else is needed.
+
+For each person: install Tailscale (Windows, macOS, Linux, iOS, Android), sign in to the company tailnet (or accept a share of this one machine from the Tailscale admin console), then open:
+
+* dashboard: `http://100.102.25.112:8080`
+* streams: `rtsp://100.102.25.112:8554/<name>`
+
+A dashboard opened over Tailscale copies Tailscale URLs by default; the **URLs use** picker in the sidebar marks that address "Tailscale, any network". The edge keeps the LAN URL.
+
+Notes:
+
+* **If Tailscale runs on the Proxmox host but the app runs in a VM** with another IP, `tailscale ip -4` inside the VM prints nothing. Either install Tailscale in the VM, or make the host a subnet router (`sudo tailscale up --advertise-routes=192.168.29.0/24`, then approve the route in the admin console) and give tailnet users the VM's `192.168.29.x` address.
+* Who may connect is controlled in the Tailscale admin console (users, device approval, ACLs). For people who cannot install anything, use Cloudflare (§4c) for the dashboard.
+* Optional HTTPS name inside the tailnet: `sudo tailscale serve --bg http://127.0.0.1:8080` gives `https://<machine>.<tailnet>.ts.net` for the dashboard (RTSP still uses port 8554). Do **not** use `tailscale funnel`: it would publish the dashboard to the whole internet, and login is off by default.
 
 ## 3. Ports and firewall
 

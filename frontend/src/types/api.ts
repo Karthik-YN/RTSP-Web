@@ -254,6 +254,8 @@ export interface Capacity {
 export interface RtspHost {
   host: string;
   kind: "canonical" | "alternate" | "browser";
+  /** "tailscale": reachable from any network by devices on the tailnet. */
+  network?: "tailscale" | null;
 }
 
 export interface AppConfig {

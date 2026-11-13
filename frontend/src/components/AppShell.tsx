@@ -115,14 +115,19 @@ export function RtspAddressPicker({ port }: { port: number }) {
         <select className="input h-8 w-full py-0 font-mono text-xs" value={addr.host ?? ""} aria-label="RTSP address"
           title="Server address used in copied RTSP URLs" onChange={(e) => addr.setHost(e.target.value)}>
           {addr.hosts.map((h) => (
-            <option key={h.host} value={h.host}>{urlHost(h.host)}:{port} ({HOST_KIND_LABEL[h.kind]})</option>
+            <option key={h.host} value={h.host}>
+              {urlHost(h.host)}:{port} ({h.network === "tailscale" ? "Tailscale, any network" : HOST_KIND_LABEL[h.kind]})
+            </option>
           ))}
         </select>
       </label>
       {browser && addr.host !== browser.host && (
         <button className="text-left text-[11px] text-brand hover:underline" onClick={() => addr.setHost(browser.host)}>
-          You opened this page via {urlHost(browser.host)}. Use it in URLs?
+          You opened this page via {browser.network === "tailscale" ? "Tailscale " : ""}{urlHost(browser.host)}. Use it in URLs?
         </button>
+      )}
+      {addr.custom && addr.hosts.find((h) => h.host === addr.host)?.network === "tailscale" && (
+        <div className="text-[11px] text-muted">Plays on devices signed in to Tailscale, from any network.</div>
       )}
       {addr.custom && <div className="text-[11px] text-amber-700 dark:text-amber-300">Not the main address: give the edge the main one.</div>}
     </div>

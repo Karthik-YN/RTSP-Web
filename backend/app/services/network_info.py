@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 _HOSTNAME = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
                        r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$")
 LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost"}
+# Tailscale gives every device an address from the CGNAT range (100.64.0.0/10)
+# and an IPv6 from fd7a:115c:a1e0::/48; MagicDNS names end in .ts.net.
+TAILSCALE_NETS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 
 def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -51,6 +54,14 @@ def valid_host(host: str) -> bool:
 def is_loopback(host: str) -> bool:
     ip = _ip(host)
     return (ip is not None and ip.is_loopback) or host.lower().rstrip(".") in LOOPBACK_NAMES
+
+
+def is_tailscale(host: str) -> bool:
+    """A Tailscale address or MagicDNS name: reachable from any network for devices on the tailnet."""
+    ip = _ip(host)
+    if ip is not None:
+        return any(ip.version == n.version and ip in n for n in TAILSCALE_NETS)
+    return host.lower().rstrip(".").endswith(".ts.net")
 
 
 def url_host(host: str) -> str:
@@ -89,7 +100,11 @@ def interface_addresses() -> list[str]:
 
 def rtsp_hosts(settings: Settings, request_host: str | None = None,
                via_tunnel: bool = False) -> list[dict]:
-    """Ordered, de-duplicated choices: [{host, kind}] with kind canonical|alternate|browser."""
+    """Ordered, de-duplicated choices: [{host, kind, network}].
+
+    kind is canonical|alternate|browser; network is "tailscale" for Tailscale
+    addresses (usable from anywhere by tailnet members), else None.
+    """
     out: list[dict] = []
     seen: set[str] = set()
 
@@ -97,7 +112,7 @@ def rtsp_hosts(settings: Settings, request_host: str | None = None,
         key = host.lower().rstrip(".")
         if key and key not in seen and valid_host(host):
             seen.add(key)
-            out.append({"host": host, "kind": kind})
+            out.append({"host": host, "kind": kind, "network": "tailscale" if is_tailscale(host) else None})
 
     add(settings.public_rtsp_host, "canonical")
     for h in settings.rtsp_alt_hosts:

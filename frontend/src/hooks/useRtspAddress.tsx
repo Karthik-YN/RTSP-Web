@@ -36,6 +36,20 @@ function readStored(): string | null {
   try { return localStorage.getItem(KEY); } catch { return null; }
 }
 
+function pageHost(): string {
+  try { return window.location.hostname.replace(/^\[|\]$/g, ""); } catch { return ""; }
+}
+
+/**
+ * The default when nothing was chosen in this browser: the canonical host,
+ * except when the dashboard itself was opened over Tailscale. Then the user is
+ * (probably) off the office LAN, and only the Tailscale address will play.
+ */
+export function defaultHost(hosts: RtspHost[], opened: string = pageHost()): string {
+  const viaTailscale = hosts.find((h) => h.network === "tailscale" && h.host.toLowerCase() === opened.toLowerCase());
+  return viaTailscale?.host ?? hosts[0].host;
+}
+
 export function RtspAddressProvider({ config, children }: { config: AppConfig; children: ReactNode }) {
   const hosts = useMemo<RtspHost[]>(
     () => config.rtsp_hosts?.length ? config.rtsp_hosts : [{ host: config.public_rtsp_host, kind: "canonical" }],
@@ -43,12 +57,12 @@ export function RtspAddressProvider({ config, children }: { config: AppConfig; c
   );
   const [stored, setStored] = useState<string | null>(readStored);
   const canonical = hosts[0].host;
-  const host = hosts.find((h) => h.host === stored)?.host ?? canonical;
+  const host = hosts.find((h) => h.host === stored)?.host ?? defaultHost(hosts);
   const value = useMemo<RtspAddress>(() => ({
     host, hosts, custom: host !== canonical,
     setHost: (h: string) => {
       setStored(h);
-      try { if (h === canonical) localStorage.removeItem(KEY); else localStorage.setItem(KEY, h); } catch { /* private mode */ }
+      try { localStorage.setItem(KEY, h); } catch { /* private mode */ }
     },
     url: (u: string) => (host === canonical ? u : withHost(u, host)),
     param: host === canonical ? undefined : host,

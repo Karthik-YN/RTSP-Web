@@ -7,7 +7,7 @@ import pytest
 
 from app.config import Settings
 from app.services import network_info
-from app.services.network_info import (AddressWatcher, host_from_header, rtsp_hosts, url_host,
+from app.services.network_info import (AddressWatcher, host_from_header, is_tailscale, rtsp_hosts, url_host,
                                        valid_host)
 
 
@@ -35,8 +35,9 @@ def test_choices_are_canonical_then_alternates_then_the_browser_host():
     s = _settings(public_rtsp_host="rig02.lan", rtsp_alt_hosts="10.8.0.5, RIG02.lan ,bad/host")
     assert s.rtsp_alt_hosts == ["10.8.0.5", "RIG02.lan", "bad/host"]  # CSV from the env file
     hosts = rtsp_hosts(s, "192.168.29.105")
-    assert hosts == [{"host": "rig02.lan", "kind": "canonical"}, {"host": "10.8.0.5", "kind": "alternate"},
-                     {"host": "192.168.29.105", "kind": "browser"}]  # duplicate + invalid dropped
+    assert hosts == [{"host": "rig02.lan", "kind": "canonical", "network": None},
+                     {"host": "10.8.0.5", "kind": "alternate", "network": None},
+                     {"host": "192.168.29.105", "kind": "browser", "network": None}]  # duplicate + invalid dropped
     assert [h["host"] for h in rtsp_hosts(s, "10.8.0.5")] == ["rig02.lan", "10.8.0.5"]  # no repeat
     assert [h["kind"] for h in rtsp_hosts(s, "localhost")] == ["canonical", "alternate"]  # loopback skipped
     assert [h["kind"] for h in rtsp_hosts(s, "127.0.0.1")] == ["canonical", "alternate"]
@@ -136,3 +137,16 @@ def test_config_and_url_export_offer_only_known_hosts(rig_factory):
         aid = c.get("/api/analytics").json()[0]["analytics"][0]["id"]
         assert c.get(f"/api/analytics/{aid}/urls?host=attacker.example").status_code == 400
         assert c.get(f"/api/analytics/{aid}/urls?host=10.8.0.5").status_code == 200
+
+
+def test_tailscale_addresses_are_recognised():
+    assert is_tailscale("100.102.25.112") and is_tailscale("100.64.0.1") and is_tailscale("100.127.255.254")
+    assert is_tailscale("fd7a:115c:a1e0::1") and is_tailscale("proxmox.tail1234.ts.net")
+    assert not is_tailscale("100.128.0.1") and not is_tailscale("192.168.29.105") and not is_tailscale("rig02.lan")
+    s = Settings(_env_file=None, public_rtsp_host="192.168.29.105", rtsp_alt_hosts=["100.102.25.112"])
+    assert [(h["host"], h["kind"], h["network"]) for h in rtsp_hosts(s, "100.102.25.112")] == [
+        ("192.168.29.105", "canonical", None), ("100.102.25.112", "alternate", "tailscale")]
+    # opened via Tailscale without configuring it: still offered, and marked
+    bare = Settings(_env_file=None, public_rtsp_host="192.168.29.105")
+    assert rtsp_hosts(bare, "100.102.25.112")[-1] == {"host": "100.102.25.112", "kind": "browser",
+                                                       "network": "tailscale"}

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { RtspAddressProvider, useRtspAddress, withHost } from "../hooks/useRtspAddress";
+import { defaultHost, RtspAddressProvider, useRtspAddress, withHost } from "../hooks/useRtspAddress";
 import { RtspAddressPicker } from "./AppShell";
 import type { AppConfig } from "../types/api";
 
@@ -52,6 +52,18 @@ describe("RTSP address picker", () => {
     render(<RtspAddressProvider config={one}><RtspAddressPicker port={8554} /></RtspAddressProvider>);
     expect(screen.getByText("rtsp://rig02.lan:8554")).toBeInTheDocument();
     expect(screen.queryByLabelText("RTSP address")).toBeNull();
+  });
+
+  it("defaults to the Tailscale address when the page was opened over Tailscale", () => {
+    const ts = [
+      { host: "192.168.29.105", kind: "canonical" as const, network: null },
+      { host: "100.102.25.112", kind: "alternate" as const, network: "tailscale" as const },
+    ];
+    expect(defaultHost(ts, "100.102.25.112")).toBe("100.102.25.112");
+    expect(defaultHost(ts, "192.168.29.105")).toBe("192.168.29.105");
+    expect(defaultHost(ts, "localhost")).toBe("192.168.29.105");
+    render(<RtspAddressProvider config={{ ...config, rtsp_hosts: ts } as AppConfig}><RtspAddressPicker port={8554} /></RtspAddressProvider>);
+    expect(screen.getByRole("option", { name: /100.102.25.112:8554 \(Tailscale, any network\)/ })).toBeInTheDocument();
   });
 
   it("swaps hosts including IPv6 literals", () => {
