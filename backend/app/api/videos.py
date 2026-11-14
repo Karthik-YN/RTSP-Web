@@ -121,7 +121,7 @@ async def upload(request: Request, filename: str = Query(..., max_length=512),
                  ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
     """Upload a video as the raw request body (streamed to disk, never held in memory).
 
-    Example: ``curl -u user:pass -T clip.mp4 "http://server/api/videos/upload?filename=clip.mp4"``
+    Example: ``curl -u user:pass --data-binary @clip.mp4 "http://server/api/videos/upload?filename=clip.mp4"`` (POST; ``-T`` sends PUT and gets 405)
     """
     try:
         size = int(request.headers.get("content-length", "0"))

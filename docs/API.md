@@ -92,7 +92,7 @@ Requests that arrive through Cloudflare (a `Cf-Ray` / `Cf-Connecting-Ip` header)
 H=http://rig02.example.internal:8080; A="-u admin:secret"
 
 # upload (streamed; the server checks disk space before writing)
-curl $A -T clip.mp4 "$H/api/videos/upload?filename=clip.mp4"
+curl $A --data-binary @clip.mp4 -H "Content-Type: application/octet-stream" "$H/api/videos/upload?filename=clip.mp4"
 
 # find the video id
 curl -s $A "$H/api/videos?search=clip" | python3 -m json.tool | grep -E '"(id|filename|compat_mode)"'
