@@ -4,8 +4,8 @@ import { api, ApiError } from "../services/api";
 import type { AnalyticsCategory, AnalyticsSuggestion, Video } from "../types/api";
 import { ErrorBox, Modal, Spinner } from "./common";
 
-/** "" = all videos, "none" = in no analytics, otherwise an analytics id. */
-export type AnalyticsFilter = "" | "none" | `${number}`;
+import type { AnalyticsFilter } from "../lib/libraryFilters";
+export type { AnalyticsFilter };
 
 export function filterByAnalytics(videos: Video[], f: AnalyticsFilter): Video[] {
   if (!f) return videos;
@@ -18,7 +18,7 @@ export function AnalyticsFilterSelect({ value, onChange, tree }: {
   value: AnalyticsFilter; onChange: (f: AnalyticsFilter) => void; tree: AnalyticsCategory[] | null;
 }) {
   return (
-    <select className="input w-auto max-w-[14rem]" value={value} aria-label="Filter by analytics"
+    <select className="input w-auto max-w-[14rem] max-sm:max-w-none max-sm:flex-1" value={value} aria-label="Filter by analytics"
       onChange={(e) => onChange(e.target.value as AnalyticsFilter)}>
       <option value="">All analytics</option>
       <option value="none">Not in any analytics</option>
@@ -31,11 +31,20 @@ export function AnalyticsFilterSelect({ value, onChange, tree }: {
   );
 }
 
-/** Pick the analytics a video belongs to; the ones it is already in are ticked and fixed. */
-export function AssignDialog({ v, tree, onClose, onDone }: {
-  v: Video; tree: AnalyticsCategory[]; onClose: () => void; onDone: (added: string[]) => void;
+/** Pick analytics for one or more videos. Analytics every chosen video is already in are ticked and fixed. */
+export function AssignDialog({ videos, tree, onClose, onDone }: {
+  videos: Video[]; tree: AnalyticsCategory[]; onClose: () => void;
+  /** names of the analytics that got new links, and how many links were added */
+  onDone: (added: string[], links: number) => void;
 }) {
-  const have = useMemo(() => new Set((v.analytics ?? []).map((a) => a.id)), [v]);
+  const have = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const v of videos) for (const a of v.analytics ?? []) counts.set(a.id, (counts.get(a.id) ?? 0) + 1);
+    return {
+      all: new Set([...counts].filter(([, n]) => n === videos.length).map(([id]) => id)),
+      some: new Set([...counts].filter(([, n]) => n < videos.length).map(([id]) => id)),
+    };
+  }, [videos]);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -48,29 +57,36 @@ export function AssignDialog({ v, tree, onClose, onDone }: {
     setBusy(true);
     setErr(null);
     try {
-      const r = await api.assignVideos([v.id], [...picked]);
-      onDone(r.created.map((c) => c.analytics_name));
+      const r = await api.assignVideos(videos.map((v) => v.id), [...picked]);
+      onDone([...new Set(r.created.map((c) => c.analytics_name))], r.created.length);
     } catch (e) {
       setErr((e as ApiError).message);
       setBusy(false);
     }
   };
+  const one = videos.length === 1;
   return (
-    <Modal title={`Add ${v.filename} to analytics`} onClose={onClose}>
-      <p className="mb-3 text-sm text-muted">Each analytics gets a video placeholder with this video, ready to run from its page.</p>
+    <Modal title={one ? `Add ${videos[0].filename} to analytics` : `Add ${videos.length} videos to analytics`} onClose={onClose}>
+      <p className="mb-3 text-sm text-muted">
+        Each analytics gets a video placeholder per video, ready to run from its page.
+        {!one && " Videos already in an analytics are skipped."}
+      </p>
       <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1" data-testid="assign-list">
         {tree.map((c) => (
           <fieldset key={c.id}>
             <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{c.name}</legend>
             <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
-              {c.analytics.map((a) => (
-                <label key={a.id} className={`flex items-center gap-2 rounded px-1 py-1 text-sm ${have.has(a.id) ? "text-muted" : "hover:bg-surface-2"}`}>
-                  <input type="checkbox" checked={have.has(a.id) || picked.has(a.id)} disabled={have.has(a.id)}
-                    onChange={() => toggle(a.id)} />
-                  <span className="truncate">{a.name}</span>
-                  {have.has(a.id) && <span className="text-xs">(already in)</span>}
-                </label>
-              ))}
+              {c.analytics.map((a) => {
+                const all = have.all.has(a.id);
+                return (
+                  <label key={a.id} className={`flex items-center gap-2 rounded px-1 py-1.5 text-sm ${all ? "text-muted" : "hover:bg-surface-2"}`}>
+                    <input type="checkbox" className="h-4 w-4" checked={all || picked.has(a.id)} disabled={all} onChange={() => toggle(a.id)} />
+                    <span className="truncate">{a.name}</span>
+                    {all && <span className="text-xs">(already in)</span>}
+                    {have.some.has(a.id) && <span className="text-xs text-muted">(some already in)</span>}
+                  </label>
+                );
+              })}
             </div>
           </fieldset>
         ))}

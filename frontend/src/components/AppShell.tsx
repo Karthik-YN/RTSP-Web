@@ -286,9 +286,20 @@ function Badge({ children, tone }: { children: ReactNode; tone?: "bad" }) {
 
 // ------------------------------------------------------------------ top bar
 function TopBar({ onMenu, onCreate, onLogout }: { onMenu: () => void; onCreate: () => void; onLogout: () => void }) {
+  // publish the header's height as --header-h, so sticky bars below it sit flush at any width
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const set = () => document.documentElement.style.setProperty("--header-h", `${el.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const { user } = useRig();
   return (
-    <header className="sticky top-0 z-20 border-b border-line bg-surface/85 backdrop-blur">
+    <header ref={headerRef} className="sticky top-0 z-20 border-b border-line bg-surface/85 backdrop-blur">
       <div className="mx-auto flex max-w-[100rem] items-center gap-3 px-4 py-2.5 sm:px-6">
         <button className="btn-ghost p-1.5 lg:hidden" onClick={onMenu} aria-label="Open menu"><MenuIcon /></button>
         <HealthPills />
@@ -336,15 +347,17 @@ function HealthPills() {
   };
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-      <div className="relative" ref={ref}>
+    // one line always: lower-priority metrics hide as the bar narrows (lg: the sidebar takes 16 rem)
+    <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden text-xs">
+      <div className="relative shrink-0" ref={ref}>
         <button onClick={() => setOpen((o) => !o)}
-          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ring-1 ring-inset ${ok
+          className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 font-semibold ring-1 ring-inset ${ok
             ? "bg-emerald-500/10 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300"
             : "bg-red-500/10 text-red-700 ring-red-500/30 dark:text-red-300"}`}
           aria-expanded={open} aria-haspopup="dialog">
           <span className={`h-2 w-2 rounded-full ${ok ? "bg-emerald-500" : "animate-pulse bg-red-500"}`} />
-          {appError ? "Server offline" : ok ? "All systems normal" : `MediaMTX ${state}`}
+          <span className="sm:hidden">{appError ? "Offline" : ok ? "OK" : `MediaMTX ${state}`}</span>
+          <span className="hidden sm:inline">{appError ? "Server offline" : ok ? "All systems normal" : `MediaMTX ${state}`}</span>
         </button>
         {open && (
           <div className="absolute left-0 top-full z-30 mt-2 w-72 rounded-xl border border-line bg-surface p-4 text-sm shadow-pop" role="dialog">
@@ -371,10 +384,10 @@ function HealthPills() {
       </div>
       <Metric label="CPU" pct={system?.cpu_percent} text={system ? `${system.cpu_percent.toFixed(0)}%` : "–"} />
       <Metric label="RAM" pct={system?.memory.percent} text={system ? `${formatBytes(system.memory.available)} free` : "–"} className="hidden sm:flex" />
-      <Metric label="Disk" pct={disk?.percent ?? undefined} warn={85} bad={95} text={disk ? `${formatBytes(disk.free)} free` : "–"} className="hidden md:flex" />
+      <Metric label="Disk" pct={disk?.percent ?? undefined} warn={85} bad={95} text={disk ? `${formatBytes(disk.free)} free` : "–"} className="hidden xl:flex" />
       <Metric label="Streams" pct={s ? (s.desired_running / Math.max(1, s.max_active)) * 100 : undefined} warn={80} bad={100}
-        text={s ? `${s.running}/${s.max_active}` : "–"} className="hidden md:flex" />
-      <span className="hidden items-center gap-1 text-muted xl:flex">Viewers <b className="text-fg">{system?.viewers ?? "–"}</b>
+        text={s ? `${s.running}/${s.max_active}` : "–"} className="hidden xl:flex" />
+      <span className="hidden shrink-0 items-center gap-1 whitespace-nowrap text-muted 2xl:flex">Viewers <b className="text-fg">{system?.viewers ?? "–"}</b>
         {system?.rtsp_egress_bps != null && <span className="ml-1" title="Total RTSP bitrate sent to readers">· {formatBitrate(system.rtsp_egress_bps)} out</span>}</span>
     </div>
   );
@@ -390,7 +403,7 @@ function Metric({ label, pct, text, warn = 80, bad = 90, className = "" }: {
   const p = Math.max(0, Math.min(100, pct ?? 0));
   const color = p >= bad ? "bg-red-500" : p >= warn ? "bg-amber-500" : "bg-emerald-500";
   return (
-    <span className={`items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 ring-1 ring-inset ring-line ${className || "flex"}`}
+    <span className={`shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-surface-2 px-2.5 py-1 ring-1 ring-inset ring-line ${className || "flex"}`}
       title={`${label}: ${text}`}>
       <span className="font-semibold text-muted">{label}</span>
       <span className="h-1.5 w-10 overflow-hidden rounded-full bg-line"><span className={`block h-full ${color}`} style={{ width: `${p}%` }} /></span>

@@ -136,14 +136,14 @@ describe("Library and analytics", () => {
     mockFetch({ "/api/analytics/assign": { created: [{ slot_id: 30, analytics_id: 21, analytics_name: "PPE", video_id: 7 }], skipped: 0 } });
     const onDone = vi.fn();
     const u = userEvent.setup();
-    wrap(<AssignDialog v={linked} tree={tree} onClose={() => {}} onDone={onDone} />);
+    wrap(<AssignDialog videos={[linked]} tree={tree} onClose={() => {}} onDone={onDone} />);
     const anpr = screen.getByRole("checkbox", { name: /videoANPR/ });
     expect(anpr).toBeChecked();
     expect(anpr).toBeDisabled();
     expect(screen.getByRole("button", { name: /Add to/ })).toBeDisabled();
     await u.click(screen.getByRole("checkbox", { name: /PPE/ }));
     await u.click(screen.getByRole("button", { name: /Add to 1 analytics/ }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledWith(["PPE"]));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(["PPE"], 1));
     expect(posts("/api/analytics/assign")).toEqual([{ video_ids: [7], analytics_ids: [21] }]);
   });
 

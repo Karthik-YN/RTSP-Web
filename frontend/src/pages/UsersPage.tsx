@@ -43,7 +43,7 @@ export function UsersPage() {
       </div>
       <div className="card overflow-hidden">
         {loading && !data ? <div className="space-y-2 p-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div> : (
-          <table className="w-full">
+          <div className="overflow-x-auto"><table className="w-full min-w-[32rem]">
             <thead className="bg-surface-2"><tr><th className="th">User</th><th className="th">Role</th><th className="th hidden md:table-cell">Can</th><th className="th" /></tr></thead>
             <tbody className="divide-y divide-line">
               {(data ?? []).map((u) => (
@@ -67,7 +67,7 @@ export function UsersPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
       {adding && <UserDialog onClose={() => setAdding(false)} onSaved={refresh} />}

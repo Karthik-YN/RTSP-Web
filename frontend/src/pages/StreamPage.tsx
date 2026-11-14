@@ -181,7 +181,7 @@ export function StreamPage() {
               <span className="text-muted">Dashboard preview</span> <b>{s.runtime.preview_watchers}</b></span>
           </div>
           {s.runtime.readers.length === 0 ? <p className="text-muted">No readers connected. Point the edge at the URL above.</p> : (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto"><table className="w-full min-w-[30rem] text-sm">
               <thead><tr className="text-left text-xs text-muted"><th className="py-1">Address</th><th>Host name</th><th>Transport</th><th>Since</th><th className="text-right">Sent</th></tr></thead>
               <tbody className="divide-y divide-line">
                 {s.runtime.readers.map((r) => (
@@ -194,7 +194,7 @@ export function StreamPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </Panel>
       )}

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { useRig } from "../hooks/useRigData";
 import { useCreateStream } from "../components/AppShell";
 import { VideoLibrary } from "../components/VideoLibrary";
-import { AnalyticsFilterSelect, filterByAnalytics, SuggestionsDialog, type AnalyticsFilter } from "../components/LibraryAnalytics";
+import { SuggestionsDialog } from "../components/LibraryAnalytics";
 import { useToast } from "../components/common";
 import { TagIcon } from "../components/icons";
 import { api } from "../services/api";
@@ -13,16 +12,7 @@ export function LibraryPage() {
   const rig = useRig();
   const toast = useToast();
   const create = useCreateStream();
-  const [search, setSearch] = useState("");
-  // ?analytics=<id>|none keeps the filter in the URL (links from analytics pages, reloads)
-  const [params, setParams] = useSearchParams();
-  const filter = (params.get("analytics") ?? "") as AnalyticsFilter;
-  const setFilter = (f: AnalyticsFilter) => setParams(f ? { analytics: f } : {}, { replace: true });
-  const q = search.trim().toLowerCase();
   const all = rig.videos;
-  const videos = useMemo(
-    () => filterByAnalytics((all ?? []).filter((v) => !q || v.rel_path.toLowerCase().includes(q)), filter),
-    [all, q, filter]);
 
   // name-based suggestions, re-checked whenever videos or their analytics change
   const [suggestions, setSuggestions] = useState<AnalyticsSuggestion[]>([]);
@@ -37,13 +27,12 @@ export function LibraryPage() {
   }, [sig, canWrite]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-2">
       <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-64">
           <h1 className="text-2xl font-bold tracking-tight">Video library</h1>
           <p className="text-sm text-muted">Recordings available to publish. Upload here or copy files into the server's video folder.</p>
         </div>
-        <AnalyticsFilterSelect value={filter} onChange={setFilter} tree={rig.analytics} />
         {canWrite && suggestions.length > 0 && (
           <button className="btn-secondary" onClick={() => setReviewing(true)}
             title="Videos whose names match an analytics they are not in yet">
@@ -51,8 +40,8 @@ export function LibraryPage() {
           </button>
         )}
       </div>
-      <VideoLibrary videos={videos} loading={rig.videosLoading} user={rig.user} onChanged={rig.refreshVideos}
-        onCreateStream={create} search={search} setSearch={setSearch} />
+      <VideoLibrary videos={all ?? []} loading={rig.videosLoading} user={rig.user} onChanged={rig.refreshVideos}
+        onCreateStream={create} />
       {reviewing && (
         <SuggestionsDialog items={suggestions} onClose={() => setReviewing(false)}
           onDone={(n) => {

@@ -1,25 +1,55 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
 import { formatBitrate, formatBytes, formatDuration, formatTime, since } from "../lib/format";
+import {
+  applyLibraryFilters, filtersActive, NO_FILTERS, SORT_LABEL, uploaders, videoNotes,
+  type AnalyticsFilter, type LibraryFilters, type SortKey,
+} from "../lib/libraryFilters";
 import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, PreviewConfig, User, Video } from "../types/api";
 import { useRig } from "../hooks/useRigData";
-import { Link } from "react-router-dom";
-import { AssignDialog } from "./LibraryAnalytics";
+import { AnalyticsFilterSelect, AssignDialog } from "./LibraryAnalytics";
 import { SHAPE_TEXT } from "./CreateStreamDialog";
-import { ConfirmDialog, ErrorBox, Modal, Pill, Spinner, useToast } from "./common";
-import { CameraIcon, DownloadIcon, FilmIcon, InfoIcon, PlayIcon, TagIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
+import { ConfirmDialog, ErrorBox, Modal, Pill, Skeleton, Spinner, useToast } from "./common";
+import {
+  AlertIcon, CameraIcon, CheckIcon, DownloadIcon, FilmIcon, GridIcon, InfoIcon, MenuIcon, PlayIcon, RefreshIcon,
+  SearchIcon, TagIcon, TrashIcon, UploadIcon,
+} from "./icons";
 
-export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
+/** Cards rendered per step; more appear as you scroll (keeps big libraries fast). */
+export const PAGE = 48;
+type View = "grid" | "list";
+const VIEW_KEY = "rig02.library.view";
+
+export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream }: {
   videos: Video[]; loading: boolean; user: User | null; onChanged: () => void;
-  onCreateStream: (videoId: number) => void; search: string; setSearch: (s: string) => void;
+  onCreateStream: (videoId: number) => void;
 }) {
   const toast = useToast();
   const rig = useRig();
   const { output: out, preview } = rig.config;
+  const canWrite = !!user?.can_write;
   const [refreshing, setRefreshing] = useState(false);
   const [fitting, setFitting] = useState<Video | null>(null);
-  const [assigning, setAssigning] = useState<Video | null>(null);
+  const [assigning, setAssigning] = useState<Video[] | null>(null);
+  const onAssign = useCallback((v: Video) => setAssigning([v]), []);
+
+  // filters: the analytics one lives in the URL (?analytics=), the rest in the page
+  const [params, setParams] = useSearchParams();
+  const [local, setLocal] = useState<Omit<LibraryFilters, "analytics">>(NO_FILTERS);
+  const filters: LibraryFilters = { ...local, analytics: (params.get("analytics") ?? "") as AnalyticsFilter };
+  const setFilter = (patch: Partial<LibraryFilters>) => {
+    const { analytics, ...rest } = patch;
+    if (Object.keys(rest).length) setLocal((f) => ({ ...f, ...rest }));
+    if (analytics !== undefined) setParams(analytics ? { analytics } : {}, { replace: true });
+  };
+  const clear = () => { setLocal((f) => ({ ...NO_FILTERS, sort: f.sort })); setParams({}, { replace: true }); };
+
+  const [view, setView] = useState<View>(() => {
+    try { return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "grid"; } catch { return "grid"; }
+  });
+  const changeView = (v: View) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ } };
 
   const refresh = async () => {
     setRefreshing(true);
@@ -38,7 +68,6 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
   const conv = useConversions(onChanged);
 
   const [deleting, setDeleting] = useState<Video | null>(null);
-  const usable = videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject");
   const doDelete = async (v: Video) => {
     try {
       toast("ok", (await api.deleteVideo(v.id)).message);
@@ -47,42 +76,155 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       toast("bad", (e as ApiError).message);
     }
   };
-  const unusable = videos.filter((v) => !(v.status === "READY" && v.compat_mode !== "reject"));
+  const usableAll = useMemo(() => videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject"), [videos]);
+  const unusable = useMemo(() => videos.filter((v) => !(v.status === "READY" && v.compat_mode !== "reject")), [videos]);
+  const people = useMemo(() => uploaders(usableAll), [usableAll]);
+  const attentionCount = useMemo(() => usableAll.filter((v) => videoNotes(v).length > 0).length, [usableAll]);
+  const fkey = JSON.stringify(filters);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const shown = useMemo(() => applyLibraryFilters(usableAll, filters, out), [usableAll, fkey, out]);
+
+  // paged rendering: PAGE more whenever the end of the list scrolls into view
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => setLimit(PAGE), [fkey]);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const more = shown.length > limit;
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !more || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((e) => { if (e[0]?.isIntersecting) setLimit((l) => l + PAGE); }, { rootMargin: "600px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, limit]);
+  const page = shown.slice(0, limit);
+
+  // multi-select (for "Add to analytics")
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const toggle = useCallback((v: Video) => setSelected((s) => {
+    const n = new Set(s);
+    if (n.has(v.id)) n.delete(v.id); else n.add(v.id);
+    return n;
+  }), []);
+  const stopSelecting = () => { setSelecting(false); setSelected(new Set()); };
+
+  const common = {
+    canWrite, isAdmin: !!user?.is_admin, onCreateStream, onDelete: setDeleting, onConvert: conv.start,
+    onCancel: conv.cancel, out, onFit: setFitting, preview, onAssign,
+    onToggle: selecting ? toggle : undefined,
+  };
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-xs">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-subtle" />
-          <input className="input pl-8" placeholder="Search file names…" value={search}
-            onChange={(e) => setSearch(e.target.value)} aria-label="Search videos" />
+      <div className="z-10 -mx-1 space-y-2 bg-bg/90 px-1 py-2 backdrop-blur sm:sticky sm:top-[var(--header-h,3.25rem)]" data-testid="library-toolbar">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-auto sm:min-w-[12rem] sm:max-w-xs sm:flex-1">
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-subtle" />
+            <input className="input pl-8" placeholder="Search names or uploaders…" value={filters.q}
+              onChange={(e) => setFilter({ q: e.target.value })} aria-label="Search videos" />
+          </div>
+          <select className="input w-auto max-sm:flex-1" value={filters.sort} aria-label="Sort videos"
+            onChange={(e) => setFilter({ sort: e.target.value as SortKey })}>
+            {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => <option key={k} value={k}>{SORT_LABEL[k]}</option>)}
+          </select>
+          <select className="input w-auto max-sm:flex-1" value={filters.shape} aria-label="Filter by shape"
+            onChange={(e) => setFilter({ shape: e.target.value as LibraryFilters["shape"] })}>
+            <option value="">Any shape</option>
+            <option value="16:9">16:9 only</option>
+            <option value="other">Not 16:9</option>
+          </select>
+          {people.length > 1 && (
+            <select className="input w-auto max-w-[11rem] max-sm:max-w-none max-sm:flex-1" value={filters.uploader} aria-label="Filter by uploader"
+              onChange={(e) => setFilter({ uploader: e.target.value })}>
+              <option value="">Anyone</option>
+              {people.map((p) => <option key={p} value={p}>{p === "-" ? "Added on server" : p}</option>)}
+            </select>
+          )}
+          <AnalyticsFilterSelect value={filters.analytics} onChange={(a) => setFilter({ analytics: a })} tree={rig.analytics} />
+          {attentionCount > 0 && (
+            <button className={filters.attention ? "btn-primary" : "btn-secondary"} aria-pressed={filters.attention}
+              onClick={() => setFilter({ attention: !filters.attention })} title="Videos with notes: transcoding, long keyframe gaps, VFR…">
+              <AlertIcon /> Needs attention ({attentionCount})
+            </button>
+          )}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <div className="flex rounded-lg ring-1 ring-inset ring-line" role="group" aria-label="View">
+              <button className={`rounded-l-lg p-2 ${view === "grid" ? "bg-surface-2 text-fg" : "text-muted"}`}
+                onClick={() => changeView("grid")} aria-pressed={view === "grid"} aria-label="Grid view" title="Grid"><GridIcon /></button>
+              <button className={`rounded-r-lg p-2 ${view === "list" ? "bg-surface-2 text-fg" : "text-muted"}`}
+                onClick={() => changeView("list")} aria-pressed={view === "list"} aria-label="List view" title="List"><MenuIcon /></button>
+            </div>
+            {canWrite && (
+              <button className={selecting ? "btn-primary" : "btn-secondary"} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+                <CheckIcon /> {selecting ? "Done" : "Select"}
+              </button>
+            )}
+            <button className="btn-secondary" onClick={refresh} disabled={refreshing} aria-label="Refresh" title="Rescan the server folder">
+              {refreshing ? <Spinner /> : <RefreshIcon />}<span className="hidden sm:inline">Refresh</span>
+            </button>
+            {canWrite && <UploadButton onDone={onChanged} />}
+          </div>
         </div>
-        <button className="btn-secondary" onClick={refresh} disabled={refreshing}>
-          {refreshing ? <Spinner /> : <RefreshIcon />} Refresh
-        </button>
-        {user?.can_write && <UploadButton onDone={onChanged} />}
-        <span className="text-xs text-muted lg:ml-auto">Files copied into the server's video folder appear after Refresh (or within 30 s).</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted" data-testid="library-count">
+          <span>{filtersActive(filters) ? `${shown.length} of ${usableAll.length} videos` : `${usableAll.length} video${usableAll.length === 1 ? "" : "s"}`}</span>
+          {filtersActive(filters) && <button className="text-brand hover:underline" onClick={clear}>Clear filters</button>}
+          <span className="hidden lg:ml-auto lg:inline">Files copied into the server's video folder appear after Refresh (or within 30 s).</span>
+        </div>
       </div>
 
-      {loading && videos.length === 0 && <div className="p-6"><Spinner /></div>}
-      {!loading && videos.length === 0 && (
+      {loading && videos.length === 0 && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3" aria-busy="true">
+          {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-72 rounded-xl" />)}
+        </div>
+      )}
+      {!loading && usableAll.length === 0 && unusable.length === 0 && (
         <div className="card flex flex-col items-center gap-2 p-10 text-center text-muted">
           <FilmIcon className="h-10 w-10 text-subtle" />
-          {search ? "No videos match the search." : <>The library is empty.<br />Upload a video or copy files into the server folder, then press Refresh.</>}
+          The library is empty.<br />Upload a video (or drop files anywhere on the page), or copy files into the server folder and press Refresh.
+        </div>
+      )}
+      {usableAll.length > 0 && shown.length === 0 && (
+        <div className="card flex flex-col items-center gap-2 p-8 text-center text-sm text-muted" data-testid="no-match">
+          No videos match these filters.
+          <button className="btn-secondary btn-xs" onClick={clear}>Clear filters</button>
         </div>
       )}
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
-        {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
-          onCreateStream={onCreateStream} onDelete={setDeleting} job={conv.activeFor(v.id)}
-          onConvert={conv.start} onCancel={conv.cancel} out={out} onFit={setFitting} preview={preview}
-          onAssign={setAssigning} />)}
-      </div>
+      {view === "grid" ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
+          {page.map((v) => <VideoCard key={v.id} v={v} job={conv.activeFor(v.id)} selected={selected.has(v.id)} {...common} />)}
+        </div>
+      ) : page.length > 0 && (
+        <div className="card divide-y divide-line overflow-hidden" role="list" aria-label="Videos">
+          {page.map((v) => <VideoRow key={v.id} v={v} job={conv.activeFor(v.id)} selected={selected.has(v.id)} {...common} />)}
+        </div>
+      )}
+      {more && (
+        <div ref={sentinel} className="flex justify-center py-2">
+          <button className="btn-secondary" onClick={() => setLimit((l) => l + PAGE)}>
+            Show more ({shown.length - limit} left)
+          </button>
+        </div>
+      )}
 
-      {assigning && rig.analytics && <AssignDialog v={assigning} tree={rig.analytics} onClose={() => setAssigning(null)}
-        onDone={(added) => {
+      {selecting && (
+        <div className="sticky bottom-3 z-20 mx-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-pop"
+          data-testid="selection-bar">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <button className="btn-ghost btn-xs" onClick={() => setSelected(new Set(shown.map((v) => v.id)))}>Select all {shown.length}</button>
+          <button className="btn-ghost btn-xs" disabled={!selected.size} onClick={() => setSelected(new Set())}>Clear</button>
+          <button className="btn-primary btn-xs" disabled={!selected.size || !rig.analytics}
+            onClick={() => setAssigning(usableAll.filter((v) => selected.has(v.id)))}>
+            <TagIcon className="h-3.5 w-3.5" /> Add to analytics
+          </button>
+        </div>
+      )}
+
+      {assigning && rig.analytics && <AssignDialog videos={assigning} tree={rig.analytics} onClose={() => setAssigning(null)}
+        onDone={(added, n) => {
           setAssigning(null);
-          toast("ok", added.length ? `Added to ${added.join(", ")}.` : "Already in those analytics.");
+          toast("ok", n ? `${n} link${n === 1 ? "" : "s"} added: ${added.join(", ")}.` : "Already in those analytics.");
+          if (selecting) stopSelecting();
           onChanged();
           rig.refreshAnalytics();
         }} />}
@@ -98,14 +240,14 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       )}
 
       {unusable.length > 0 && (
-        <details className="card p-3" open={usable.length === 0}>
+        <details className="card p-3" open={usableAll.length === 0}>
           <summary className="cursor-pointer text-sm font-medium text-fg">
             {unusable.length} file{unusable.length > 1 ? "s" : ""} cannot be streamed
           </summary>
           <ul className="mt-2 space-y-1 text-sm">
             {unusable.map((v) => (
               <li key={v.id} className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{v.rel_path}</span>
+                <span className="break-all font-medium">{v.rel_path}</span>
                 {user?.is_admin && v.status !== "MISSING" && (
                   <button className="btn-ghost btn-xs text-red-600" onClick={() => setDeleting(v)}>Delete</button>
                 )}
@@ -273,23 +415,107 @@ function FilePlayer({ v, onClose, onConvert, job }: {
 }
 
 /** Memoised: the library re-renders on every poll, a card only when its own video or job changes. */
-const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit, preview, onAssign }: {
+interface ItemProps {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
   job?: Conversion; onConvert: (v: Video, opts?: { profile: ConvertProfile; fit?: ConvertFit }) => Promise<string | null>;
   onCancel: (j: Conversion) => void; out?: OutputConfig; onFit: (v: Video) => void; preview?: PreviewConfig;
   onAssign?: (v: Video) => void;
-}) {
-  const onConvert = () => convertVideo(v);
+  /** Set while selecting: the item shows a checkbox. */
+  onToggle?: (v: Video) => void;
+  selected?: boolean;
+}
+
+/** What a library item offers, shared by the card and the list row. */
+function itemFlags(v: Video, out: OutputConfig | undefined, canWrite: boolean) {
   const notWide = v.is_16_9 === false;
   const blocked = notWide && !!out?.require_16_9;
   const isStd = !!out && v.display_width === out.width && v.display_height === out.height;
   const offer720 = canWrite && !!out && v.is_16_9 === true && !isStd && !v.copy_720p_id && !/ \(720p\)\.mp4$/.test(v.rel_path);
   const reasons = v.convert_reasons ?? [];
-  const tip = [...v.compat_reasons, ...v.compat_warnings].join("\n");
+  return { notWide, blocked, isStd, offer720, reasons };
+}
+
+/** Good-to-know pills, plus every warning folded into one "N notes" chip (click: details). */
+function StatusPills({ v, out, onNotes }: { v: Video; out?: OutputConfig; onNotes: () => void }) {
+  const { notWide, blocked, isStd } = itemFlags(v, out, false);
+  const notes = videoNotes(v);
+  return (
+    <div className="flex flex-wrap gap-1">
+      {v.compat_mode === "copy" && !blocked && <Pill tone="ok" title="Streams without transcoding">Edge-ready</Pill>}
+      {notWide && <Pill tone="muted" title="Kept in the library; streams must be 16:9. Make a 16:9 copy to stream it.">
+        Not 16:9 · {SHAPE_TEXT[v.shape ?? "other"]}</Pill>}
+      {isStd && <Pill tone="info">{out!.height}p</Pill>}
+      {!!v.copy_720p_id && <Pill tone="ok" title="Streams set to Standard use the 720p copy (no live transcoding)">720p copy</Pill>}
+      {!!v.copy_16x9_id && <Pill tone="ok">16:9 copy</Pill>}
+      {notes.length > 0 && (
+        <button onClick={onNotes} title={notes.join("\n")} aria-label={`${notes.length} note${notes.length > 1 ? "s" : ""} about ${v.filename}`}
+          className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-500/30 hover:bg-amber-500/20 dark:text-amber-300">
+          <AlertIcon className="h-3 w-3" /> {notes.length} note{notes.length > 1 ? "s" : ""}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MainAction({ v, canWrite, blocked, job, onCreateStream, onFit, onPlay, compact = false }: {
+  v: Video; canWrite: boolean; blocked: boolean; job?: Conversion; onCreateStream: (id: number) => void;
+  onFit: (v: Video) => void; onPlay: () => void; compact?: boolean;
+}) {
+  const cls = compact ? "btn-primary btn-xs whitespace-nowrap" : "btn-primary min-w-0 flex-1 whitespace-nowrap px-2";
+  const label = (t: string) => compact ? <span className="hidden sm:inline">{t}</span> : t;
+  if (canWrite && blocked && v.copy_16x9_id) {
+    return <button className={cls} onClick={() => onCreateStream(v.copy_16x9_id!)} title="Streams the 16:9 copy of this video"
+      aria-label={`Stream the 16:9 copy of ${v.filename}`}><CameraIcon /> {label("Stream copy")}</button>;
+  }
+  if (canWrite && blocked) {
+    return <button className={cls} onClick={() => onFit(v)} disabled={!!job} aria-label={`Make a 16:9 copy of ${v.filename}`}
+      title="Streams must be 16:9: make a 16:9 copy (the original is kept)"><RefreshIcon /> {label("16:9 copy")}</button>;
+  }
+  if (canWrite) {
+    return <button className={cls} onClick={() => onCreateStream(v.id)} aria-label={`Stream ${v.filename}`}>
+      <CameraIcon /> {label("Stream")}</button>;
+  }
+  return <button className={compact ? "btn-secondary btn-xs" : "btn-secondary min-w-0 flex-1 whitespace-nowrap px-2"} onClick={onPlay}><PlayIcon /> {label("Play")}</button>;
+}
+
+function SideActions({ v, canWrite, isAdmin, onAssign, onDelete, compact = false }: {
+  v: Video; canWrite: boolean; isAdmin: boolean; onAssign?: (v: Video) => void; onDelete: (v: Video) => void; compact?: boolean;
+}) {
+  const b = compact ? "btn-secondary btn-xs" : "btn-secondary px-1.5";
+  return (
+    <>
+      {canWrite && onAssign && (
+        <button className={b} onClick={() => onAssign(v)} title="Add to analytics"
+          aria-label={`Add ${v.filename} to analytics`}><TagIcon /></button>
+      )}
+      <a className={b} href={videoFileUrl(v.id, true)} download={v.filename}
+        title="Download to this computer" aria-label={`Download ${v.filename}`}><DownloadIcon /></a>
+      {canWrite && isAdmin && (
+        <button className={`${b} text-red-600 dark:text-red-400`} onClick={() => onDelete(v)}
+          disabled={v.streams_using > 0} title={v.streams_using > 0 ? "Used by a stream" : "Delete video (admin)"}
+          aria-label={`Delete ${v.filename}`}><TrashIcon /></button>
+      )}
+    </>
+  );
+}
+
+function SelectBox({ v, selected, onToggle, className = "" }: { v: Video; selected?: boolean; onToggle: (v: Video) => void; className?: string }) {
+  return (
+    <input type="checkbox" className={`h-5 w-5 shrink-0 cursor-pointer accent-blue-600 ${className}`} checked={!!selected}
+      onChange={() => onToggle(v)} onClick={(e) => e.stopPropagation()} aria-label={`Select ${v.filename}`} />
+  );
+}
+
+const VideoCard = memo(function VideoCard(p: ItemProps) {
+  const { v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit, preview, onAssign,
+    onToggle, selected } = p;
+  const onConvert = () => convertVideo(v);
+  const { notWide, blocked, offer720, reasons } = itemFlags(v, out, canWrite);
   const [playing, setPlaying] = useState(false);
   const [details, setDetails] = useState(false);
   return (
-    <div className="card flex flex-col overflow-hidden" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 22rem" }}>
+    <div className={`card flex flex-col overflow-hidden ${selected ? "ring-2 ring-brand" : ""}`}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 22rem" }}>
       {/* Fixed 16:9 box: portrait and 4:3 thumbnails are letterboxed inside it, so every card has the same height. */}
       <div className="group relative aspect-video shrink-0 overflow-hidden bg-slate-900" data-testid="thumb-box">
         {v.thumbnail_url
@@ -297,47 +523,39 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
               className="absolute inset-0 h-full w-full object-contain" />
           : <div className="absolute inset-0 flex items-center justify-center"><FilmIcon className="h-8 w-8 text-muted" /></div>}
         <button className="absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/30"
-          onClick={() => setPlaying(true)} aria-label={`Play ${v.filename}`} title="Play in the browser">
-          <span className="rounded-full bg-black/60 p-3 text-white opacity-80 group-hover:opacity-100"><PlayIcon className="h-6 w-6" /></span>
+          onClick={() => (onToggle ? onToggle(v) : setPlaying(true))} aria-label={onToggle ? `Select ${v.filename}` : `Play ${v.filename}`}
+          title={onToggle ? "Select" : "Play in the browser"} tabIndex={onToggle ? -1 : 0}>
+          {!onToggle && <span className="rounded-full bg-black/60 p-3 text-white opacity-80 group-hover:opacity-100"><PlayIcon className="h-6 w-6" /></span>}
         </button>
-        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white">
+        <span className="pointer-events-none absolute bottom-1.5 left-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white" data-testid="res-chip">
+          {v.display_width && v.display_height ? `${v.display_width}×${v.display_height}` : `${v.width}×${v.height}`}
+        </span>
+        <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white">
           {formatTime(v.duration_s, false)}
         </span>
         {v.streams_using > 0 && (
-          <span className="absolute left-1.5 top-1.5 rounded bg-green-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">
+          <span className="pointer-events-none absolute right-1.5 top-1.5 rounded bg-green-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">
             {v.streams_using} stream{v.streams_using > 1 ? "s" : ""}
           </span>
         )}
+        {onToggle && <SelectBox v={v} selected={selected} onToggle={onToggle} className="absolute left-2 top-2" />}
       </div>
       <div className="flex flex-1 flex-col gap-1.5 p-3">
         <div className="flex items-start gap-1">
           <div className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-medium leading-snug" title={v.rel_path}>{v.rel_path}</div>
-          <button className="-mr-1 -mt-0.5 rounded p-1 text-muted hover:bg-slate-100 hover:text-current dark:hover:bg-slate-800"
+          <button className="-mr-1 -mt-0.5 rounded p-1 text-muted hover:bg-surface-2 hover:text-fg"
             onClick={() => setDetails(true)} aria-label={`Details of ${v.filename}`} title="Details and uploader">
             <InfoIcon />
           </button>
         </div>
         <UploaderLine v={v} />
-        {!!v.analytics?.length && <AnalyticsChips v={v} />}
         <div className="flex flex-wrap gap-x-2 text-xs text-muted">
-          <span>{v.width}×{v.height}</span>
           <span>{v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")} fps` : "–"}</span>
           <span>{v.video_codec}{v.bit_depth && v.bit_depth !== 8 ? ` ${v.bit_depth}-bit` : ""}</span>
           <span>{formatBytes(v.size_bytes)}</span>
         </div>
-        <div className="flex flex-wrap gap-1" title={tip}>
-          {v.compat_mode === "copy" && !blocked && <Pill tone="ok">Edge-ready (copy)</Pill>}
-          {v.compat_mode === "transcode" && <Pill tone="warn">Needs transcode</Pill>}
-          {v.is_vfr && <Pill tone="info">VFR</Pill>}
-          {v.audio_codec && <Pill tone="muted">audio dropped</Pill>}
-          {v.keyframe_interval_s && v.keyframe_interval_s > 4 && <Pill tone="warn">long GOP</Pill>}
-          {v.browser_playable === false && <Pill tone="muted" title={v.browser_note ?? undefined}>plays in VLC only</Pill>}
-          {notWide && <Pill tone="muted" title="Kept in the library; streams must be 16:9. Make a 16:9 copy to stream it.">
-            Not 16:9 · {SHAPE_TEXT[v.shape ?? "other"]}</Pill>}
-          {isStd && <Pill tone="info">{out!.height}p</Pill>}
-          {!!v.copy_720p_id && <Pill tone="ok" title="Streams set to Standard use the 720p copy (no live transcoding)">720p copy ready</Pill>}
-          {!!v.copy_16x9_id && <Pill tone="ok">16:9 copy ready</Pill>}
-        </div>
+        {!!v.analytics?.length && <AnalyticsChips v={v} />}
+        <StatusPills v={v} out={out} onNotes={() => setDetails(true)} />
         {job ? <ConversionProgress job={job} onCancel={canWrite ? onCancel : undefined} />
           : canWrite && (
             <>
@@ -357,32 +575,62 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
               )}
             </>
           )}
-        <div className="mt-auto flex gap-1.5">
-          {canWrite && blocked && v.copy_16x9_id
-            ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.copy_16x9_id!)}
-                title="Streams the 16:9 copy of this video"><CameraIcon /> Stream 16:9 copy</button>
-            : canWrite && blocked
-            ? <button className="btn-primary flex-1" onClick={() => onFit(v)} disabled={!!job}
-                title="Streams must be 16:9: make a 16:9 copy (the original is kept)"><RefreshIcon /> Make 16:9 copy</button>
-            : canWrite
-              ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
-              : <button className="btn-secondary flex-1" onClick={() => setPlaying(true)}><PlayIcon /> Play</button>}
-          {canWrite && onAssign && (
-            <button className="btn-secondary px-2" onClick={() => onAssign(v)} title="Add to analytics"
-              aria-label={`Add ${v.filename} to analytics`}><TagIcon /></button>
-          )}
-          <a className="btn-secondary px-2" href={videoFileUrl(v.id, true)} download={v.filename}
-            title="Download to this computer" aria-label={`Download ${v.filename}`}><DownloadIcon /></a>
-          {canWrite && isAdmin && (
-            <button className="btn-secondary px-2 text-red-600 dark:text-red-400" onClick={() => onDelete(v)}
-              disabled={v.streams_using > 0} title={v.streams_using > 0 ? "Used by a stream" : "Delete video (admin)"}
-              aria-label={`Delete ${v.filename}`}><TrashIcon /></button>
-          )}
+        <div className="mt-auto flex gap-1">
+          <MainAction v={v} canWrite={canWrite} blocked={blocked} job={job} onCreateStream={onCreateStream} onFit={onFit}
+            onPlay={() => setPlaying(true)} />
+          <SideActions v={v} canWrite={canWrite} isAdmin={isAdmin} onAssign={onAssign} onDelete={onDelete} />
         </div>
       </div>
       {details && <VideoDetails v={v} onClose={() => setDetails(false)} />}
       {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} job={job} preview={preview}
         onConvert={canWrite && reasons.length > 0 ? onConvert : undefined} />}
+    </div>
+  );
+});
+
+/** One line per video: compact, for scanning long libraries. */
+const VideoRow = memo(function VideoRow(p: ItemProps) {
+  const { v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit, preview, onAssign,
+    onToggle, selected } = p;
+  const { blocked, reasons } = itemFlags(v, out, canWrite);
+  const [playing, setPlaying] = useState(false);
+  const [details, setDetails] = useState(false);
+  return (
+    <div role="listitem" className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:flex-nowrap ${selected ? "bg-brand-soft" : ""}`}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 4.5rem" }} data-testid="video-row">
+      {onToggle && <SelectBox v={v} selected={selected} onToggle={onToggle} />}
+      <button className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-md bg-slate-900"
+        onClick={() => setPlaying(true)} aria-label={`Play ${v.filename}`} title="Play in the browser">
+        {v.thumbnail_url && <img src={v.thumbnail_url} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-contain" />}
+        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-1 font-mono text-[10px] text-white">{formatTime(v.duration_s, false)}</span>
+      </button>
+      <div className="min-w-0 flex-1 basis-40">
+        <div className="flex items-center gap-1">
+          <span className="truncate text-sm font-medium" title={v.rel_path}>{v.rel_path}</span>
+          <button className="shrink-0 rounded p-0.5 text-muted hover:text-fg" onClick={() => setDetails(true)}
+            aria-label={`Details of ${v.filename}`} title="Details and uploader"><InfoIcon className="h-3.5 w-3.5" /></button>
+        </div>
+        <div className="flex flex-wrap gap-x-2 text-xs text-muted">
+          <span>{v.display_width ?? v.width}×{v.display_height ?? v.height}</span>
+          <span>{v.video_codec}</span>
+          <span>{formatBytes(v.size_bytes)}</span>
+          <span className="truncate">{v.uploaded_by ? `by ${v.uploaded_by === "anonymous" ? (v.uploaded_device ?? "anonymous") : v.uploaded_by}` : "added on server"}</span>
+          {v.streams_using > 0 && <span className="text-emerald-600 dark:text-emerald-400">{v.streams_using} stream{v.streams_using > 1 ? "s" : ""}</span>}
+        </div>
+      </div>
+      <div className="hidden w-52 shrink-0 flex-col gap-1 xl:flex">
+        {!!v.analytics?.length && <AnalyticsChips v={v} />}
+        <StatusPills v={v} out={out} onNotes={() => setDetails(true)} />
+      </div>
+      {job && <div className="w-full sm:w-48"><ConversionProgress job={job} onCancel={canWrite ? onCancel : undefined} /></div>}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <MainAction v={v} canWrite={canWrite} blocked={blocked} job={job} onCreateStream={onCreateStream} onFit={onFit}
+          onPlay={() => setPlaying(true)} compact />
+        <SideActions v={v} canWrite={canWrite} isAdmin={isAdmin} onAssign={onAssign} onDelete={onDelete} compact />
+      </div>
+      {details && <VideoDetails v={v} onClose={() => setDetails(false)} />}
+      {playing && <VideoPlayer v={v} onClose={() => setPlaying(false)} job={job} preview={preview}
+        onConvert={canWrite && reasons.length > 0 ? () => convertVideo(v) : undefined} />}
     </div>
   );
 });
@@ -571,7 +819,7 @@ function UploadButton({ onDone: _onDone }: { onDone: () => void }) {
       <input ref={input} type="file" multiple className="hidden" accept="video/*,.mkv,.ts,.mts,.m2ts"
         onChange={(e) => { enqueue(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
       <button className="btn-primary" onClick={() => input.current?.click()} title="You can also drop videos anywhere on the page">
-        <UploadIcon /> Upload videos
+        <UploadIcon /> Upload<span className="hidden sm:inline"> videos</span>
       </button>
     </>
   );

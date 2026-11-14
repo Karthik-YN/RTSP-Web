@@ -14,15 +14,16 @@ export function Modal({ title, onClose, children, wide = false }: {
   // Rendered at the end of <body>: a dialog opened from inside a card must not be clipped or
   // positioned by the card (cards use content-visibility, which contains fixed children).
   return createPortal(
-    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/50 p-4 pt-12 backdrop-blur-sm"
+    // phones: a full-screen sheet; from sm up: a centred card
+    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/50 backdrop-blur-sm sm:p-4 sm:pt-12"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div role="dialog" aria-label={title}
-        className={`card w-full shadow-pop ${wide ? "max-w-4xl" : "max-w-lg"} p-0`}>
-        <div className="flex items-center justify-between border-b border-line px-5 py-3">
-          <h2 className="text-base font-semibold">{title}</h2>
-          <button className="btn-ghost btn-xs" onClick={onClose} aria-label="Close">✕</button>
+        className={`card min-h-full w-full p-0 shadow-pop max-sm:rounded-none max-sm:border-0 sm:min-h-0 ${wide ? "max-w-4xl" : "max-w-lg"}`}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-3 sm:static sm:rounded-t-xl sm:px-5">
+          <h2 className="min-w-0 truncate text-base font-semibold" title={title}>{title}</h2>
+          <button className="btn-ghost btn-xs shrink-0 max-sm:h-9 max-sm:w-9" onClick={onClose} aria-label="Close">✕</button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-4 sm:p-5">{children}</div>
       </div>
     </div>,
     document.body,
@@ -86,7 +87,7 @@ export function Pill({ tone, children, title }: { tone: "ok" | "warn" | "bad" | 
     info: "bg-blue-500/10 text-blue-700 ring-blue-500/25 dark:text-blue-300",
     muted: "bg-slate-500/10 text-muted ring-slate-500/20",
   }[tone];
-  return <span title={title} className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${cls}`}>{children}</span>;
+  return <span title={title} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${cls}`}>{children}</span>;
 }
 
 // ------------------------------------------------------------------ Copy

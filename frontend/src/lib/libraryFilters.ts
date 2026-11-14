@@ -1,0 +1,76 @@
+// Library search, filters and sort (client side: the whole list is already loaded and polled).
+import type { OutputConfig, Video } from "../types/api";
+
+export type SortKey = "name" | "newest" | "size" | "duration";
+export type ShapeFilter = "" | "16:9" | "other";
+/** "" = all videos, "none" = in no analytics, otherwise an analytics id. */
+export type AnalyticsFilter = "" | "none" | `${number}`;
+
+export interface LibraryFilters {
+  q: string;
+  sort: SortKey;
+  shape: ShapeFilter;
+  /** Only videos with notes (needs transcoding, long keyframe gap, VFR, …). */
+  attention: boolean;
+  /** "" = anyone; "-" = added on the server; otherwise a username. */
+  uploader: string;
+  analytics: AnalyticsFilter;
+}
+
+export const NO_FILTERS: LibraryFilters = { q: "", sort: "name", shape: "", attention: false, uploader: "", analytics: "" };
+
+export const SORT_LABEL: Record<SortKey, string> = {
+  name: "Name", newest: "Newest", size: "Largest", duration: "Longest",
+};
+
+export function filtersActive(f: LibraryFilters): boolean {
+  return !!(f.q.trim() || f.shape || f.attention || f.uploader || f.analytics);
+}
+
+/** Things worth knowing before streaming this video; shown as one "N notes" chip. */
+export function videoNotes(v: Video): string[] {
+  const n: string[] = [];
+  if (v.compat_mode === "transcode") n.push("Needs live transcoding" + (v.compat_reasons.length ? `: ${v.compat_reasons.join("; ")}` : ""));
+  if (v.keyframe_interval_s && v.keyframe_interval_s > 4) n.push(`Keyframes only every ${v.keyframe_interval_s.toFixed(1)} s: readers wait that long to start`);
+  if (v.is_vfr) n.push("Variable frame rate");
+  if (v.audio_codec) n.push("Has audio: dropped when streaming");
+  if (v.browser_playable === false) n.push(v.browser_note || "Browsers can't play it; VLC can");
+  for (const w of v.compat_warnings) if (!n.includes(w)) n.push(w);
+  return n;
+}
+
+export function uploaderKey(v: Video): string {
+  return v.uploaded_by ?? "-";
+}
+
+function inAnalytics(v: Video, f: AnalyticsFilter): boolean {
+  if (!f) return true;
+  if (f === "none") return !v.analytics?.length;
+  const id = Number(f);
+  return !!v.analytics?.some((a) => a.id === id);
+}
+
+const newest = (v: Video) => Date.parse(v.uploaded_at ?? v.updated_at ?? "") || 0;
+
+export function applyLibraryFilters(videos: Video[], f: LibraryFilters, _out?: OutputConfig): Video[] {
+  const q = f.q.trim().toLowerCase();
+  const list = videos.filter((v) =>
+    (!q || v.rel_path.toLowerCase().includes(q) || (v.uploaded_by ?? "").toLowerCase().includes(q))
+    && (!f.shape || (f.shape === "16:9" ? v.is_16_9 !== false : v.is_16_9 === false))
+    && (!f.attention || videoNotes(v).length > 0)
+    && (!f.uploader || uploaderKey(v) === f.uploader)
+    && inAnalytics(v, f.analytics));
+  const byName = (a: Video, b: Video) => a.rel_path.localeCompare(b.rel_path, undefined, { numeric: true, sensitivity: "base" });
+  const cmp: Record<SortKey, (a: Video, b: Video) => number> = {
+    name: byName,
+    newest: (a, b) => newest(b) - newest(a) || byName(a, b),
+    size: (a, b) => b.size_bytes - a.size_bytes || byName(a, b),
+    duration: (a, b) => (b.duration_s ?? 0) - (a.duration_s ?? 0) || byName(a, b),
+  };
+  return list.sort(cmp[f.sort]);
+}
+
+/** Everyone who uploaded something, plus "-" when some files were added on the server. */
+export function uploaders(videos: Video[]): string[] {
+  return [...new Set(videos.map(uploaderKey))].sort((a, b) => (a === "-" ? 1 : b === "-" ? -1 : a.localeCompare(b)));
+}
