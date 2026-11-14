@@ -4,18 +4,22 @@ import { useUploads } from "./UploadQueue";
 import { formatBitrate, formatBytes, formatDuration, formatTime, since } from "../lib/format";
 import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, PreviewConfig, User, Video } from "../types/api";
 import { useRig } from "../hooks/useRigData";
+import { Link } from "react-router-dom";
+import { AssignDialog } from "./LibraryAnalytics";
 import { SHAPE_TEXT } from "./CreateStreamDialog";
 import { ConfirmDialog, ErrorBox, Modal, Pill, Spinner, useToast } from "./common";
-import { CameraIcon, DownloadIcon, FilmIcon, InfoIcon, PlayIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
+import { CameraIcon, DownloadIcon, FilmIcon, InfoIcon, PlayIcon, TagIcon, RefreshIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
 export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream, search, setSearch }: {
   videos: Video[]; loading: boolean; user: User | null; onChanged: () => void;
   onCreateStream: (videoId: number) => void; search: string; setSearch: (s: string) => void;
 }) {
   const toast = useToast();
-  const { output: out, preview } = useRig().config;
+  const rig = useRig();
+  const { output: out, preview } = rig.config;
   const [refreshing, setRefreshing] = useState(false);
   const [fitting, setFitting] = useState<Video | null>(null);
+  const [assigning, setAssigning] = useState<Video | null>(null);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -71,8 +75,17 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream,
       <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
         {usable.map((v) => <VideoCard key={v.id} v={v} canWrite={!!user?.can_write} isAdmin={!!user?.is_admin}
           onCreateStream={onCreateStream} onDelete={setDeleting} job={conv.activeFor(v.id)}
-          onConvert={conv.start} onCancel={conv.cancel} out={out} onFit={setFitting} preview={preview} />)}
+          onConvert={conv.start} onCancel={conv.cancel} out={out} onFit={setFitting} preview={preview}
+          onAssign={setAssigning} />)}
       </div>
+
+      {assigning && rig.analytics && <AssignDialog v={assigning} tree={rig.analytics} onClose={() => setAssigning(null)}
+        onDone={(added) => {
+          setAssigning(null);
+          toast("ok", added.length ? `Added to ${added.join(", ")}.` : "Already in those analytics.");
+          onChanged();
+          rig.refreshAnalytics();
+        }} />}
 
       {fitting && <FitDialog v={fitting} out={out} onClose={() => setFitting(null)}
         onStart={async (fit) => { const err = await conv.start(fitting, { profile: "16x9", fit }); if (!err) setFitting(null); return err; }} />}
@@ -260,10 +273,11 @@ function FilePlayer({ v, onClose, onConvert, job }: {
 }
 
 /** Memoised: the library re-renders on every poll, a card only when its own video or job changes. */
-const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit, preview }: {
+const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream, onDelete, job, onConvert: convertVideo, onCancel, out, onFit, preview, onAssign }: {
   v: Video; canWrite: boolean; isAdmin: boolean; onCreateStream: (id: number) => void; onDelete: (v: Video) => void;
   job?: Conversion; onConvert: (v: Video, opts?: { profile: ConvertProfile; fit?: ConvertFit }) => Promise<string | null>;
   onCancel: (j: Conversion) => void; out?: OutputConfig; onFit: (v: Video) => void; preview?: PreviewConfig;
+  onAssign?: (v: Video) => void;
 }) {
   const onConvert = () => convertVideo(v);
   const notWide = v.is_16_9 === false;
@@ -304,6 +318,7 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
           </button>
         </div>
         <UploaderLine v={v} />
+        {!!v.analytics?.length && <AnalyticsChips v={v} />}
         <div className="flex flex-wrap gap-x-2 text-xs text-muted">
           <span>{v.width}×{v.height}</span>
           <span>{v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")} fps` : "–"}</span>
@@ -352,6 +367,10 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
             : canWrite
               ? <button className="btn-primary flex-1" onClick={() => onCreateStream(v.id)}><CameraIcon /> Stream this</button>
               : <button className="btn-secondary flex-1" onClick={() => setPlaying(true)}><PlayIcon /> Play</button>}
+          {canWrite && onAssign && (
+            <button className="btn-secondary px-2" onClick={() => onAssign(v)} title="Add to analytics"
+              aria-label={`Add ${v.filename} to analytics`}><TagIcon /></button>
+          )}
           <a className="btn-secondary px-2" href={videoFileUrl(v.id, true)} download={v.filename}
             title="Download to this computer" aria-label={`Download ${v.filename}`}><DownloadIcon /></a>
           {canWrite && isAdmin && (
@@ -367,6 +386,24 @@ const VideoCard = memo(function VideoCard({ v, canWrite, isAdmin, onCreateStream
     </div>
   );
 });
+
+/** Analytics this video is in, each linking to its page (at most 3 shown, then "+N"). */
+export function AnalyticsChips({ v }: { v: Video }) {
+  const list = v.analytics ?? [];
+  const shown = list.slice(0, 3);
+  return (
+    <div className="flex flex-wrap gap-1" data-testid="analytics-chips">
+      {shown.map((a) => (
+        <Link key={a.slot_id} to={`/analytics/${a.id}`} title={`Open ${a.name}`}
+          className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand hover:underline">{a.name}</Link>
+      ))}
+      {list.length > shown.length && (
+        <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
+          title={list.slice(3).map((a) => a.name).join(", ")}>+{list.length - shown.length}</span>
+      )}
+    </div>
+  );
+}
 
 /** "Uploaded by alice · 2h ago", or "Added on server" for files copied straight into the video folder. */
 export function UploaderLine({ v, now }: { v: Video; now?: number }) {

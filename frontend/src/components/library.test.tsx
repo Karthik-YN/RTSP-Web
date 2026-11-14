@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
-import { ConversionProgress, FitDialog, previewStarts, containerName, UploaderLine, VideoDetails, VideoPlayer, videoFileUrl } from "./VideoLibrary";
+import { AnalyticsChips, ConversionProgress, FitDialog, previewStarts, containerName, UploaderLine, VideoDetails, VideoPlayer, videoFileUrl } from "./VideoLibrary";
 import { blockedShape, OutputSizeField, outputPlan } from "./CreateStreamDialog";
 import type { Conversion, Video } from "../types/api";
 
@@ -153,5 +154,16 @@ describe("uploader", () => {
       "23.976", "6.5 Mbit/s", "every 2.0 s", "Copy (no transcoding)"]) {
       expect(d).toHaveTextContent(t);
     }
+  });
+});
+
+describe("analytics chips", () => {
+  it("links each analytics a video is in, and folds the rest", () => {
+    const names = ["PPE", "FireSmoke", "CrowdDensity", "Parking", "Elephant"];
+    const v = { ...video, analytics: names.map((name, i) => ({ id: i + 1, name, slot_id: 10 + i })) } as Video;
+    render(<MemoryRouter><AnalyticsChips v={v} /></MemoryRouter>);
+    expect(screen.getByRole("link", { name: "PPE" })).toHaveAttribute("href", "/analytics/1");
+    expect(screen.getAllByRole("link")).toHaveLength(3);
+    expect(screen.getByText("+2")).toHaveAttribute("title", "Parking, Elephant");
   });
 });

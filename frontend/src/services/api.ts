@@ -2,7 +2,7 @@ import type {
   Conversion,
   ConvertFit,
   ConvertProfile,
-  AnalyticsCategory, AnalyticsDetail, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, HealthReport, LeadInMode, MediaMTXStatus, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
+  AnalyticsCategory, AnalyticsDetail, AnalyticsSuggestion, AssignResult, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, HealthReport, LeadInMode, MediaMTXStatus, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
 } from "../types/api";
 
 /** Error carrying the server's message (FastAPI `detail`) and extra fields. */
@@ -202,6 +202,9 @@ export const api = {
   cancelConversion: (jobId: string) => request<Conversion>("DELETE", `/api/videos/conversions/${jobId}`),
   analyticsTree: () => request<AnalyticsCategory[]>("GET", "/api/analytics"),
   analytics: (id: number) => request<AnalyticsDetail>("GET", `/api/analytics/${id}`),
+  analyticsSuggestions: () => request<AnalyticsSuggestion[]>("GET", "/api/analytics/suggestions"),
+  assignVideos: (video_ids: number[], analytics_ids: number[]) =>
+    request<AssignResult>("POST", "/api/analytics/assign", { video_ids, analytics_ids }),
   createAnalytics: (name: string, category_id: number, description?: string) =>
     request<{ id: number }>("POST", "/api/analytics", { name, category_id, description }),
   updateAnalytics: (id: number, body: { name?: string; description?: string; category_id?: number }) =>

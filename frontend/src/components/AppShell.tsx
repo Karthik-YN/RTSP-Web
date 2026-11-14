@@ -147,6 +147,19 @@ export function AnalyticsNav() {
     try { return JSON.parse(localStorage.getItem(FOLDED_KEY) ?? "[]"); } catch { return []; }
   });
   const [adding, setAdding] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  // "/" jumps to the analytics search (unless typing in a field already)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const toggle = (id: number) => {
     const next = folded.includes(id) ? folded.filter((x) => x !== id) : [...folded, id];
     setFolded(next);
@@ -170,7 +183,7 @@ export function AnalyticsNav() {
       <div className="px-3 pb-2">
         <div className="relative">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-subtle" />
-          <input className="input h-8 py-1 pl-8 text-xs" placeholder="Find an analytics" value={q}
+          <input ref={searchRef} className="input h-8 py-1 pl-8 text-xs" placeholder="Find an analytics  ( / )" value={q}
             onChange={(e) => setQ(e.target.value)} aria-label="Find an analytics" />
         </div>
       </div>
@@ -191,12 +204,12 @@ export function AnalyticsNav() {
               {isOpen && c.analytics.map((a) => (
                 <NavLink key={a.id} to={`/analytics/${a.id}`} title={a.description ?? a.name}
                   className={({ isActive }) => `ml-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${isActive
-                    ? "bg-brand-soft font-medium text-brand" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
+                    ? "bg-brand-soft font-medium text-brand" : "text-muted hover:bg-surface-2 hover:text-fg"} ${!a.slots && !isActive ? "opacity-60" : ""}`}>
                   <span className="min-w-0 flex-1 truncate">{a.name}</span>
                   {a.problems > 0 && <span className="h-2 w-2 rounded-full bg-red-500" title={`${a.problems} stream(s) need attention`} />}
                   {a.streams > 0
                     ? <span className="tabular-nums text-xs text-subtle" title={`${a.running} live of ${a.streams} streams`}>{a.running}/{a.streams}</span>
-                    : a.slots > 0 ? <span className="text-xs text-subtle" title="Video placeholders">{a.slots} vid</span> : null}
+                    : (a.videos ?? a.slots) > 0 ? <span className="text-xs text-subtle" title="Videos in this analytics">{a.videos ?? a.slots} vid</span> : null}
                 </NavLink>
               ))}
             </div>

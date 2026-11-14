@@ -88,6 +88,7 @@ class VideoOut(BaseModel):
     uploaded_at: datetime | None = None
     uploaded_from: str | None = None  # client IP
     uploaded_device: str | None = None  # e.g. "Windows · Chrome"
+    analytics: list[dict] = []  # analytics this video is in: {id, name, slot_id}
 
 
 class ScanOut(BaseModel):

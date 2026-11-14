@@ -10,6 +10,7 @@ something still depends on the item, so nothing is lost by accident.
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 from typing import Literal
 
@@ -22,12 +23,14 @@ from sqlalchemy.exc import IntegrityError
 from ..database import utcnow
 from ..models import Analytics, AnalyticsCategory, AnalyticsSlot, Stream, Video
 from ..schemas import TimeValue
+from ..services.analytics_suggest import suggest
 from ..services.auth import User
 from ..services.errors import ServiceError
+from ..services.shape import video_shape
 from .deps import Context, chosen_host, current_user, get_ctx, require_operator
 from .groups import run_bulk
 from .streams import _cfg, _proc_index, stream_out
-from .videos import video_out
+from .videos import _copies_720p, video_out
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -67,6 +70,11 @@ class SlotPatch(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     video_id: int | None = None
     clear_video: bool = False
+
+
+class AssignIn(BaseModel):
+    video_ids: list[int] = Field(min_length=1, max_length=200)
+    analytics_ids: list[int] = Field(min_length=1, max_length=50)
 
 
 class ReorderIn(BaseModel):
@@ -156,9 +164,62 @@ def tree(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
             mine = [st for st in streams if slot_owner.get(st.slot_id) == a.id]
             rows.append({"id": a.id, "name": a.name, "description": a.description, "sort": a.sort,
                          "slots": sum(1 for sl in slots if sl.analytics_id == a.id),
+                         "videos": len({sl.video_id for sl in slots if sl.analytics_id == a.id and sl.video_id}),
                          "slot_ids": [sl.id for sl in slots if sl.analytics_id == a.id], **_counts(ctx, mine)})
         out.append({"id": c.id, "name": c.name, "sort": c.sort, "analytics": rows})
     return out
+
+
+# ------------------------------------------------- library -> analytics
+@router.get("/suggestions")
+def suggestions(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
+    """Videos whose file name suggests an analytics they are not in yet (e.g. Fire.mp4 -> FireSmoke)."""
+    with ctx.db.session() as s:
+        videos = [SimpleNamespace(id=v.id, rel_path=v.rel_path, status=v.status, compat_mode=v.compat_mode,
+                                  is_16_9=video_shape(v)["is_16_9"])
+                  for v in s.scalars(select(Video).where(Video.status == "READY"))]
+        items = list(s.scalars(select(Analytics).order_by(Analytics.sort, Analytics.id)))
+        linked = {(a, v) for a, v in s.execute(select(AnalyticsSlot.analytics_id, AnalyticsSlot.video_id)
+                                               .where(AnalyticsSlot.video_id.is_not(None)))}
+    return suggest(videos, items, linked)
+
+
+@router.post("/assign")
+def assign(body: AssignIn, ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
+    """Add library videos to analytics: one placeholder per (video, analytics), titled after the file.
+
+    Pairs that already exist are skipped, so this is safe to repeat.
+    """
+    video_ids, analytics_ids = list(dict.fromkeys(body.video_ids)), list(dict.fromkeys(body.analytics_ids))
+    with ctx.db.session() as s:
+        vids = {v.id: v for v in s.scalars(select(Video).where(Video.id.in_(video_ids)))}
+        items = {a.id: a for a in s.scalars(select(Analytics).where(Analytics.id.in_(analytics_ids)))}
+        missing_v = [i for i in video_ids if i not in vids]
+        missing_a = [i for i in analytics_ids if i not in items]
+        if missing_v or missing_a:
+            raise HTTPException(404, f"Not found: videos {missing_v}, analytics {missing_a}".replace(
+                "videos [], ", "").replace(", analytics []", ""))
+        linked = {(a, v) for a, v in s.execute(select(AnalyticsSlot.analytics_id, AnalyticsSlot.video_id)
+                                               .where(AnalyticsSlot.analytics_id.in_(analytics_ids)))}
+        now, created, skipped = utcnow(), [], 0
+        for aid in analytics_ids:
+            sort = s.scalar(select(func.max(AnalyticsSlot.sort)).where(AnalyticsSlot.analytics_id == aid)) or 0
+            for vid in video_ids:
+                if (aid, vid) in linked:
+                    skipped += 1
+                    continue
+                sort += 1
+                sl = AnalyticsSlot(analytics_id=aid, title=PurePosixPath(vids[vid].rel_path).stem[:120],
+                                   video_id=vid, sort=sort, created_by=user.username, created_at=now, updated_at=now)
+                s.add(sl)
+                s.flush()
+                created.append({"slot_id": sl.id, "analytics_id": aid, "analytics_name": items[aid].name,
+                                "video_id": vid})
+    if created:
+        names = sorted({c["analytics_name"] for c in created})
+        ctx.events.add("analytics.assign", f"{len(created)} video link(s) added to {', '.join(names)}",
+                       username=user.username)
+    return {"created": created, "skipped": skipped}
 
 
 # ------------------------------------------------------------ categories
@@ -201,9 +262,10 @@ def delete_category(cid: int, ctx: Context = Depends(get_ctx), user: User = Depe
 
 
 # ----------------------------------------------------------------- slots
-def _slot_out(ctx: Context, sl: AnalyticsSlot, video: Video | None, streams: list[Stream], proc: dict) -> dict:
+def _slot_out(ctx: Context, sl: AnalyticsSlot, video: Video | None, streams: list[Stream], proc: dict,
+              copies: dict[str, int] | None = None) -> dict:
     return {"id": sl.id, "analytics_id": sl.analytics_id, "title": sl.title, "description": sl.description,
-            "sort": sl.sort, "video": video_out(video).model_dump(mode="json") if video else None,
+            "sort": sl.sort, "video": video_out(video, copies=copies).model_dump(mode="json") if video else None,
             "streams": [stream_out(ctx, st, proc).model_dump(mode="json") for st in streams],
             "created_by": sl.created_by, "created_at": sl.created_at, "updated_at": sl.updated_at}
 
@@ -230,7 +292,7 @@ def update_slot(sid: int, body: SlotPatch, ctx: Context = Depends(get_ctx), user
         s.flush()
         video = s.get(Video, sl.video_id) if sl.video_id else None
         streams = list(s.scalars(select(Stream).where(Stream.slot_id == sid).order_by(Stream.name)))
-        return _slot_out(ctx, sl, video, streams, _proc_index(ctx))
+        return _slot_out(ctx, sl, video, streams, _proc_index(ctx), _copies_720p(s))
 
 
 @router.delete("/slots/{sid}", status_code=204)
@@ -303,9 +365,11 @@ def detail(aid: int, ctx: Context = Depends(get_ctx), _: User = Depends(current_
         streams = list(s.scalars(select(Stream).where(Stream.slot_id.in_(ids)).order_by(Stream.name))) if ids else []
         vids = {v.id: v for v in s.scalars(select(Video).where(Video.id.in_([sl.video_id for sl in slots
                                                                               if sl.video_id])))}
+        copies = _copies_720p(s)
         return {"id": a.id, "name": a.name, "description": a.description,
                 "category": {"id": cat.id, "name": cat.name}, **_counts(ctx, streams),
-                "slots": [_slot_out(ctx, sl, vids.get(sl.video_id), [st for st in streams if st.slot_id == sl.id], proc)
+                "slots": [_slot_out(ctx, sl, vids.get(sl.video_id), [st for st in streams if st.slot_id == sl.id], proc,
+                                    copies)
                           for sl in slots]}
 
 

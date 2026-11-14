@@ -156,10 +156,32 @@ export interface Video {
   uploaded_from?: string | null;
   /** Readable browser/OS or tool from the upload's User-Agent, e.g. "Windows · Chrome". */
   uploaded_device?: string | null;
+  /** Analytics this video is in (one placeholder each). */
+  analytics?: VideoAnalyticsLink[];
   thumbnail_url: string | null;
   streams_using: number;
   updated_at: string;
   last_seen_at: string;
+}
+
+export interface VideoAnalyticsLink {
+  id: number;
+  name: string;
+  slot_id: number;
+}
+
+/** "Fire.mp4 looks like FireSmoke": suggested from words in the file name, linked only when confirmed. */
+export interface AnalyticsSuggestion {
+  video_id: number;
+  rel_path: string;
+  analytics_id: number;
+  analytics_name: string;
+  word: string;
+}
+
+export interface AssignResult {
+  created: { slot_id: number; analytics_id: number; analytics_name: string; video_id: number }[];
+  skipped: number;
 }
 
 export interface StreamDetail extends Stream {
@@ -387,6 +409,8 @@ export interface AnalyticsItem extends AnalyticsCounts {
   description: string | null;
   sort: number;
   slots: number;
+  /** Distinct library videos in its placeholders. */
+  videos?: number;
   slot_ids: number[];
 }
 

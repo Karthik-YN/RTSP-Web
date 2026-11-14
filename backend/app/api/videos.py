@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from starlette.requests import ClientDisconnect
 
-from ..models import Stream, Video
+from ..models import Analytics, AnalyticsSlot, Stream, Video
 from ..schemas import ScanOut, UploadCheckIn, UploadCheckOut, VideoOut
 from ..services.auth import User
 from pydantic import BaseModel
@@ -33,7 +33,8 @@ def _copies_720p(s) -> dict[str, int]:
     return dict(rows)
 
 
-def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str, int] | None = None) -> VideoOut:
+def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str, int] | None = None,
+              links: dict[int, list[dict]] | None = None) -> VideoOut:
     playable, note = browser_playback(v)
     job = converter.active_for(v.id) if converter is not None else None
     return VideoOut(
@@ -51,7 +52,19 @@ def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str
         copy_16x9_id=(copies or {}).get(target_rel(v.rel_path, "16x9")),
         uploaded_by=v.uploaded_by, uploaded_at=v.uploaded_at, uploaded_from=v.uploaded_from,
         uploaded_device=describe_agent(v.uploaded_agent),
+        analytics=(links or {}).get(v.id, []),
     )
+
+
+def video_links(s) -> dict[int, list[dict]]:
+    """video_id -> the analytics it is in ({id, name, slot_id}), for the library."""
+    out: dict[int, list[dict]] = {}
+    q = (select(AnalyticsSlot.video_id, AnalyticsSlot.id, Analytics.id, Analytics.name)
+         .join(Analytics, Analytics.id == AnalyticsSlot.analytics_id)
+         .where(AnalyticsSlot.video_id.is_not(None)).order_by(Analytics.name))
+    for vid, sid, aid, name in s.execute(q):
+        out.setdefault(vid, []).append({"id": aid, "name": name, "slot_id": sid})
+    return out
 
 
 def _origin(request: Request) -> dict:
@@ -82,7 +95,8 @@ def list_videos(search: str | None = Query(default=None, max_length=200),
         videos = list(s.scalars(q))
         usage = dict(s.execute(select(Stream.video_id, func.count()).group_by(Stream.video_id)).all())
         copies = _copies_720p(s)
-    return [video_out(v, usage.get(v.id, 0), ctx.library.converter, copies) for v in videos]
+        links = video_links(s)
+    return [video_out(v, usage.get(v.id, 0), ctx.library.converter, copies, links) for v in videos]
 
 
 @router.post("/refresh", response_model=ScanOut)
@@ -227,7 +241,8 @@ def get_video(video_id: int, ctx: Context = Depends(get_ctx), _: User = Depends(
     with ctx.db.session() as s:
         n = s.scalar(select(func.count()).select_from(Stream).where(Stream.video_id == video_id)) or 0
         copies = _copies_720p(s)
-    return video_out(v, n, ctx.library.converter, copies)
+        links = video_links(s)
+    return video_out(v, n, ctx.library.converter, copies, links)
 
 
 @router.get("/{video_id}/thumbnail")

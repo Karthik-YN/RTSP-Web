@@ -69,6 +69,9 @@ export function AnalyticsPage() {
         <Stat label="Viewers" value={data.viewers} />
         {data.problems > 0 && <Stat label="Need attention" value={data.problems} tone="bad" />}
         <div className="ml-auto flex flex-wrap gap-2">
+          <Link className="btn-secondary" to={`/library?analytics=${data.id}`} title="The library, showing only this analytics' videos">
+            <FilmIcon /> In library
+          </Link>
           {user.can_write && data.streams > 0 && (
             <>
               <button className="btn-secondary" disabled={!!busy} onClick={() => bulk("start")}>
@@ -200,7 +203,7 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
 }) {
   const toast = useToast();
   const { enqueue } = useUploads();
-  const { videos } = useRig();
+  const { videos, config } = useRig();
   const fileInput = useRef<HTMLInputElement>(null);
   const [dialog, setDialog] = useState<null | "edit" | "pick" | "run" | "remove">(null);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -244,9 +247,10 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
         onChange={(e) => { attachUpload(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
       {/* media */}
       {v ? (
-        <div className="relative aspect-video bg-slate-900">
+        <div className="relative aspect-video shrink-0 overflow-hidden bg-slate-900" data-testid="slot-thumb">
+          {/* fixed 16:9 box: portrait thumbnails are pillarboxed, so cards keep the same height */}
           {v.thumbnail_url
-            ? <img src={v.thumbnail_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+            ? <img src={v.thumbnail_url} alt="" className="absolute inset-0 h-full w-full object-contain" loading="lazy" />
             : <div className="flex h-full items-center justify-center text-slate-500"><FilmIcon className="h-8 w-8" /></div>}
           <div className="absolute bottom-2 left-2 flex gap-1">
             <span className="rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white">{formatDuration(v.duration_s)}</span>
@@ -303,14 +307,31 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
           </ul>
         )}
 
-        {canWrite && v && (
+        {canWrite && v && (blockedShape(v, config.output) ? (
+          <div className="mt-auto space-y-1.5" data-testid="slot-not-16-9">
+            {v.copy_16x9_id ? (
+              <button className="btn-primary w-full" onClick={async () => {
+                try {
+                  await api.updateSlot(slot.id, { video_id: v.copy_16x9_id! });
+                  toast("ok", "Now using the 16:9 copy.");
+                  onChanged();
+                } catch (e) { toast("bad", (e as ApiError).message); }
+              }}><FilmIcon /> Use the 16:9 copy</button>
+            ) : (
+              <Link className="btn-secondary w-full" to={`/library?analytics=${slot.analytics_id}`}>
+                <FilmIcon /> Make a 16:9 copy in the library
+              </Link>
+            )}
+            <p className="text-xs text-muted">Not 16:9 ({SHAPE_TEXT[v.shape ?? "other"]}): streams must be 16:9.</p>
+          </div>
+        ) : (
           <div className="mt-auto">
             <button className="btn-primary w-full" disabled={v.status !== "READY" || v.compat_mode === "reject"}
               onClick={() => setDialog("run")}>
               <CameraIcon /> Run RTSP{slot.streams.length ? " (more cameras)" : ""}
             </button>
           </div>
-        )}
+        ))}
       </div>
 
       {dialog === "edit" && (

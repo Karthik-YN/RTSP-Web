@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AnalyticsNav } from "../components/AppShell";
+import { AssignDialog, filterByAnalytics, SuggestionsDialog } from "../components/LibraryAnalytics";
 import { ToastProvider } from "../components/common";
 import { UploadQueueProvider } from "../components/UploadQueue";
 import { RigDataProvider } from "../hooks/useRigData";
@@ -48,11 +49,11 @@ function mockFetch(routes: Record<string, unknown>) {
   }) as typeof fetch;
 }
 
-function wrap(ui: React.ReactNode, at = "/") {
+function wrap(ui: React.ReactNode, at = "/", cfg: AppConfig = config) {
   return render(
     <ToastProvider>
       <MemoryRouter initialEntries={[at]}>
-        <RigDataProvider user={user} config={config}>
+        <RigDataProvider user={user} config={cfg}>
           <UploadQueueProvider onUploaded={() => {}}>{ui}</UploadQueueProvider>
         </RigDataProvider>
       </MemoryRouter>
@@ -112,5 +113,79 @@ describe("AnalyticsPage", () => {
     expect(within(dialog).getByText("ppe-2")).toBeInTheDocument(); // ppe-1 is taken
     expect(within(dialog).queryByText("ppe-1")).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /Create 3 streams/ })).toBeEnabled();
+  });
+});
+
+function posts(path: string) {
+  return (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls
+    .filter(([u, init]) => String(u) === path && init?.method === "POST")
+    .map(([, init]) => JSON.parse(String(init!.body)));
+}
+
+describe("Library and analytics", () => {
+  const linked = { ...video, analytics: [{ id: 11, name: "videoANPR", slot_id: 5 }] } as Video;
+
+  it("filters the library by analytics", () => {
+    const other = { ...video, id: 8, analytics: [] } as Video;
+    expect(filterByAnalytics([linked, other], "")).toHaveLength(2);
+    expect(filterByAnalytics([linked, other], "11").map((v) => v.id)).toEqual([7]);
+    expect(filterByAnalytics([linked, other], "none").map((v) => v.id)).toEqual([8]);
+  });
+
+  it("adds a video to the chosen analytics; ones it is already in are fixed", async () => {
+    mockFetch({ "/api/analytics/assign": { created: [{ slot_id: 30, analytics_id: 21, analytics_name: "PPE", video_id: 7 }], skipped: 0 } });
+    const onDone = vi.fn();
+    const u = userEvent.setup();
+    wrap(<AssignDialog v={linked} tree={tree} onClose={() => {}} onDone={onDone} />);
+    const anpr = screen.getByRole("checkbox", { name: /videoANPR/ });
+    expect(anpr).toBeChecked();
+    expect(anpr).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Add to/ })).toBeDisabled();
+    await u.click(screen.getByRole("checkbox", { name: /PPE/ }));
+    await u.click(screen.getByRole("button", { name: /Add to 1 analytics/ }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(["PPE"]));
+    expect(posts("/api/analytics/assign")).toEqual([{ video_ids: [7], analytics_ids: [21] }]);
+  });
+
+  it("links only the suggestions left ticked", async () => {
+    mockFetch({ "/api/analytics/assign": { created: [{}], skipped: 0 } });
+    const items = [
+      { video_id: 1, rel_path: "Fire.mp4", analytics_id: 40, analytics_name: "FireSmoke", word: "fire" },
+      { video_id: 2, rel_path: "smoke2.mp4", analytics_id: 40, analytics_name: "FireSmoke", word: "smoke" },
+      { video_id: 3, rel_path: "PPE gate.mp4", analytics_id: 21, analytics_name: "PPE", word: "ppe" },
+    ];
+    const onDone = vi.fn();
+    const u = userEvent.setup();
+    wrap(<SuggestionsDialog items={items} onClose={() => {}} onDone={onDone} />);
+    expect(within(screen.getByTestId("suggestions")).getAllByRole("checkbox")).toHaveLength(3);
+    await u.click(screen.getByRole("checkbox", { name: /smoke2\.mp4/ }));
+    await u.click(screen.getByRole("button", { name: "Add 2 selected" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(2));
+    expect(posts("/api/analytics/assign")).toEqual([
+      { video_ids: [1], analytics_ids: [40] }, { video_ids: [3], analytics_ids: [21] },
+    ]);
+  });
+
+  it("offers the 16:9 copy instead of Run for a portrait video", async () => {
+    const portrait = { ...video, is_16_9: false, shape: "portrait", copy_16x9_id: 44 } as Video;
+    const d = { ...detail, slots: [{ ...detail.slots[1], video: portrait, streams: [] }] };
+    mockFetch({ "/api/analytics": tree, "/api/analytics/21": d, "/api/streams": [] });
+    const cfg = { ...config, output: { width: 1280, height: 720, default: "standard", sizes: [], require_16_9: true } } as AppConfig;
+    wrap(<Routes><Route path="/analytics/:id" element={<AnalyticsPage />} /></Routes>, "/analytics/21", cfg);
+    const box = await screen.findByTestId("slot-not-16-9");
+    expect(within(box).getByRole("button", { name: /Use the 16:9 copy/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Run RTSP/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /In library/ })).toHaveAttribute("href", "/library?analytics=21");
+  });
+
+  it("jumps to the analytics search with /", async () => {
+    localStorage.clear(); // an earlier test folds a category
+    mockFetch({ "/api/analytics": tree, "/api/streams": [] });
+    const u = userEvent.setup();
+    wrap(<AnalyticsNav />);
+    await screen.findByText("videoANPR");
+    await u.keyboard("/");
+    expect(screen.getByLabelText("Find an analytics")).toHaveFocus();
+    expect(screen.getByLabelText("Find an analytics")).toHaveValue("");
   });
 });

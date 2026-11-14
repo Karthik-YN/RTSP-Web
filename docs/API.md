@@ -63,7 +63,9 @@ Requests that arrive through Cloudflare (a `Cf-Ray` / `Cf-Connecting-Ip` header)
 | POST | `/api/groups/members` `{stream_ids, group_id}` | Put streams into a group (`null` removes them) |
 | POST | `/api/groups/{id}/start\|stop\|restart` | Act on every stream of a group |
 | GET | `/api/groups/{id}/urls?format=txt\|csv&host=` | All RTSP URLs of a group (for the portal or `measure_recovery.py`). `host` must be one of `rtsp_hosts` (else 400) |
-| GET | `/api/analytics` | Left-taskbar tree: categories → analytics with `slots`, `slot_ids`, `streams`, `running`, `problems`, `viewers` |
+| GET | `/api/analytics` | Left-taskbar tree: categories → analytics with `slots`, `videos` (distinct library videos), `slot_ids`, `streams`, `running`, `problems`, `viewers` |
+| GET | `/api/analytics/suggestions` | Videos whose file name suggests an analytics they are not in yet: `[{video_id, rel_path, analytics_id, analytics_name, word}]` (e.g. `Fire.mp4` → FireSmoke, "fire"). An original and its converted copies count once; the 16:9 one is suggested. Nothing is linked by this call |
+| POST | `/api/analytics/assign` `{video_ids, analytics_ids}` | Operator: add each video to each analytics as a placeholder titled after the file. Existing pairs are skipped (`{created, skipped}`), so it is safe to repeat. 404 lists unknown ids. Library videos list the analytics they are in as `analytics: [{id, name, slot_id}]` |
 | GET | `/api/analytics/{id}` | One analytics: its video placeholders (`slots`), each with its video and the streams run from it |
 | POST · PATCH · DELETE | `/api/analytics` · `/api/analytics/{id}` | Add (`{name, category_id, description}`), rename/move/describe, delete (409 while it still has placeholders) |
 | POST · PATCH · DELETE | `/api/analytics/categories` · `/api/analytics/categories/{id}` | Manage categories (delete: 409 while it still has analytics) |
