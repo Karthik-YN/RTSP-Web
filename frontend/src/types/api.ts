@@ -152,6 +152,9 @@ export interface Video {
   copy_16x9_id?: number | null;
   /** Who uploaded it through the app; null for files copied onto the server. */
   uploaded_by?: string | null;
+  /** Shown as the uploader: "admin" for admin accounts, uploads made with login off and files
+   * copied onto the server; otherwise the user name. */
+  uploader?: string;
   uploaded_at?: string | null;
   uploaded_from?: string | null;
   /** Readable browser/OS or tool from the upload's User-Agent, e.g. "Windows · Chrome". */

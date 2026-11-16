@@ -46,13 +46,14 @@ describe("library filters and sort", () => {
     expect(names({ q: "ALICE" })).toEqual(["gate.mp4"]);
     expect(names({ shape: "other" })).toEqual(["phone clip.mp4"]);
     expect(names({ shape: "16:9" })).toEqual(["Fire.mp4", "gate.mp4"]);
-    expect(names({ uploader: "-" })).toEqual(["Fire.mp4"]);
+    expect(names({ uploader: "admin" })).toEqual(["Fire.mp4"]); // copied onto the server: shown as admin
+    expect(names({ q: "smoke" })).toEqual(["Fire.mp4"]); // search also matches analytics tags
     expect(names({ uploader: "bob" })).toEqual(["phone clip.mp4"]);
     expect(names({ analytics: "16" })).toEqual(["Fire.mp4"]);
     expect(names({ analytics: "none" })).toEqual(["gate.mp4", "phone clip.mp4"]);
     expect(names({ attention: true })).toEqual(["gate.mp4"]);
     expect(videoNotes(gate)[0]).toMatch(/Keyframes only every 10.0 s/);
-    expect(uploaders(all)).toEqual(["alice", "bob", "-"]);
+    expect(uploaders(all)).toEqual(["admin", "alice", "bob"]);
   });
 });
 

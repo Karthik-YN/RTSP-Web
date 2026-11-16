@@ -144,7 +144,7 @@ def get_stream(stream_id: int, ctx: Context = Depends(get_ctx), _: User = Depend
     if row.video_id is not None:
         with ctx.db.session() as s:
             v = s.get(Video, row.video_id)
-            video = video_out(v) if v else None
+            video = video_out(v, admins=ctx.users.admin_names()) if v else None
     events = [
         {"ts": e.ts.isoformat(), "level": e.level, "kind": e.kind, "user": e.username, "message": e.message}
         for e in ctx.events.recent(30, stream_id=stream_id)

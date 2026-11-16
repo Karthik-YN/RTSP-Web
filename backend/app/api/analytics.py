@@ -265,7 +265,8 @@ def delete_category(cid: int, ctx: Context = Depends(get_ctx), user: User = Depe
 def _slot_out(ctx: Context, sl: AnalyticsSlot, video: Video | None, streams: list[Stream], proc: dict,
               copies: dict[str, int] | None = None) -> dict:
     return {"id": sl.id, "analytics_id": sl.analytics_id, "title": sl.title, "description": sl.description,
-            "sort": sl.sort, "video": video_out(video, copies=copies).model_dump(mode="json") if video else None,
+            "sort": sl.sort, "video": (video_out(video, copies=copies, admins=ctx.users.admin_names()).model_dump(mode="json")
+                      if video else None),
             "streams": [stream_out(ctx, st, proc).model_dump(mode="json") for st in streams],
             "created_by": sl.created_by, "created_at": sl.created_at, "updated_at": sl.updated_at}
 

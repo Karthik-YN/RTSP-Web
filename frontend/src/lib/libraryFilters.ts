@@ -39,8 +39,15 @@ export function videoNotes(v: Video): string[] {
   return n;
 }
 
+/** Who added the video, as shown: "admin" for administrators (and anything from before login existed),
+ * otherwise the user name. The server decides; this only falls back for older servers. */
+export function uploaderName(v: Video): string {
+  if (v.uploader) return v.uploader;
+  return !v.uploaded_by || v.uploaded_by === "anonymous" ? "admin" : v.uploaded_by;
+}
+
 export function uploaderKey(v: Video): string {
-  return v.uploaded_by ?? "-";
+  return uploaderName(v);
 }
 
 function inAnalytics(v: Video, f: AnalyticsFilter): boolean {
@@ -55,7 +62,8 @@ const newest = (v: Video) => Date.parse(v.uploaded_at ?? v.updated_at ?? "") || 
 export function applyLibraryFilters(videos: Video[], f: LibraryFilters, _out?: OutputConfig): Video[] {
   const q = f.q.trim().toLowerCase();
   const list = videos.filter((v) =>
-    (!q || v.rel_path.toLowerCase().includes(q) || (v.uploaded_by ?? "").toLowerCase().includes(q))
+    (!q || v.rel_path.toLowerCase().includes(q) || uploaderName(v).toLowerCase().includes(q)
+      || (v.analytics ?? []).some((a) => a.name.toLowerCase().includes(q)))
     && (!f.shape || (f.shape === "16:9" ? v.is_16_9 !== false : v.is_16_9 === false))
     && (!f.attention || videoNotes(v).length > 0)
     && (!f.uploader || uploaderKey(v) === f.uploader)
@@ -70,7 +78,7 @@ export function applyLibraryFilters(videos: Video[], f: LibraryFilters, _out?: O
   return list.sort(cmp[f.sort]);
 }
 
-/** Everyone who uploaded something, plus "-" when some files were added on the server. */
+/** Everyone shown as an uploader, "admin" first. */
 export function uploaders(videos: Video[]): string[] {
-  return [...new Set(videos.map(uploaderKey))].sort((a, b) => (a === "-" ? 1 : b === "-" ? -1 : a.localeCompare(b)));
+  return [...new Set(videos.map(uploaderKey))].sort((a, b) => (a === "admin" ? -1 : b === "admin" ? 1 : a.localeCompare(b)));
 }

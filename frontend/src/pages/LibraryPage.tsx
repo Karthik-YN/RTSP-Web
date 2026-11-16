@@ -30,8 +30,9 @@ export function LibraryPage() {
     <div className="space-y-2">
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-0 flex-1 basis-64">
-          <h1 className="text-2xl font-bold tracking-tight">Video library</h1>
-          <p className="text-sm text-muted">Recordings available to publish. Upload here or copy files into the server's video folder.</p>
+          <h1 className="text-2xl font-bold tracking-tight">Shared video library</h1>
+          <p className="text-sm text-muted">Every video on this server, shared by all users, including the ones uploaded
+            from an analytics page. Click a video to play it; its tags show which analytics it belongs to.</p>
         </div>
         {canWrite && suggestions.length > 0 && (
           <button className="btn-secondary" onClick={() => setReviewing(true)}

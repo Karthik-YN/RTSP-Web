@@ -85,6 +85,7 @@ class VideoOut(BaseModel):
     copy_16x9_id: int | None = None  # the ready "(720p 16x9)" copy of a non-16:9 video, if any
     # Set when uploaded through the dashboard/API (None: copied onto the server)
     uploaded_by: str | None = None  # user name ("anonymous" when login is off)
+    uploader: str = "admin"  # as shown: "admin" for admin/anonymous/copied-on-server, else the user name
     uploaded_at: datetime | None = None
     uploaded_from: str | None = None  # client IP
     uploaded_device: str | None = None  # e.g. "Windows · Chrome"

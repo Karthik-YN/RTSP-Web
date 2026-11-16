@@ -96,7 +96,11 @@ describe("AnalyticsPage", () => {
     expect(await screen.findByRole("heading", { name: "PPE" })).toBeInTheDocument();
     expect(screen.getByText("Helmet and vest checks")).toBeInTheDocument();
     expect(screen.getByText("Day shift, 6 workers")).toBeInTheDocument();
-    // empty placeholder offers upload and library
+    // upload straight from the page; no "placeholder" step any more
+    expect(screen.getByRole("button", { name: "Upload video" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add from shared library/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Add video placeholder/)).not.toBeInTheDocument();
+    // an older empty card still offers upload and library
     expect(screen.getByRole("button", { name: /Upload from this device/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Choose from library/ })).toBeInTheDocument();
     // stream row: name, viewers (peak in the title), preview watchers separately
@@ -113,6 +117,52 @@ describe("AnalyticsPage", () => {
     expect(within(dialog).getByText("ppe-2")).toBeInTheDocument(); // ppe-1 is taken
     expect(within(dialog).queryByText("ppe-1")).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /Create 3 streams/ })).toBeEnabled();
+  });
+});
+
+describe("AnalyticsPage uploads", () => {
+  const libVideo = { ...video, id: 40, rel_path: "crowd.mp4", filename: "crowd.mp4", size_bytes: 1234 } as Video;
+  const empty = { ...detail, slots: [], streams: 0, running: 0, viewers: 0 };
+
+  it("adds a video from the shared library to this analytics", async () => {
+    mockFetch({ "/api/analytics": tree, "/api/analytics/21": empty, "/api/streams": [], "/api/videos": [libVideo, video],
+      "/api/analytics/assign": { created: [{ slot_id: 50, analytics_id: 21, analytics_name: "PPE", video_id: 40 }], skipped: 0 } });
+    const u = userEvent.setup();
+    wrap(<Routes><Route path="/analytics/:id" element={<AnalyticsPage />} /></Routes>, "/analytics/21");
+    expect(await screen.findByTestId("analytics-empty")).toHaveTextContent("No videos for PPE yet");
+    await u.click(screen.getAllByRole("button", { name: /Add from shared library/ })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await u.click(await within(dialog).findByText("crowd.mp4"));
+    await waitFor(() => expect(posts("/api/analytics/assign")).toEqual([{ video_ids: [40], analytics_ids: [21] }]));
+  });
+
+  it("a dropped file that is already in the library is added without uploading it again", async () => {
+    mockFetch({ "/api/analytics": tree, "/api/analytics/21": empty, "/api/streams": [], "/api/videos": [libVideo],
+      "/api/analytics/assign": { created: [{ slot_id: 51, analytics_id: 21, analytics_name: "PPE", video_id: 40 }], skipped: 0 } });
+    const u = userEvent.setup();
+    wrap(<Routes><Route path="/analytics/:id" element={<AnalyticsPage />} /></Routes>, "/analytics/21");
+    await screen.findByTestId("analytics-empty");
+    await waitFor(() => expect((globalThis.fetch as unknown as { mock: { calls: [string][] } }).mock.calls
+      .some(([url]) => String(url).startsWith("/api/videos"))).toBe(true));
+    await new Promise((r) => setTimeout(r, 50)); // let the library list arrive
+    const file = new File([new Uint8Array(1234)], "crowd.mp4", { type: "video/mp4" });
+    await u.upload(screen.getByTestId("analytics-upload-input"), file);
+    await waitFor(() => expect(posts("/api/analytics/assign")).toEqual([{ video_ids: [40], analytics_ids: [21] }]));
+    expect(posts("/api/videos/uploads")).toEqual([]);
+  });
+
+  it("hides upload for viewers", async () => {
+    mockFetch({ "/api/analytics": tree, "/api/analytics/21": empty, "/api/streams": [] });
+    const viewer: User = { username: "v", role: "viewer", can_write: false, is_admin: false, auth_enabled: true };
+    render(
+      <ToastProvider><MemoryRouter initialEntries={["/analytics/21"]}>
+        <RigDataProvider user={viewer} config={config}><UploadQueueProvider onUploaded={() => {}}>
+          <Routes><Route path="/analytics/:id" element={<AnalyticsPage />} /></Routes>
+        </UploadQueueProvider></RigDataProvider>
+      </MemoryRouter></ToastProvider>,
+    );
+    expect(await screen.findByTestId("analytics-empty")).toHaveTextContent("An operator or admin can upload");
+    expect(screen.queryByRole("button", { name: "Upload video" })).not.toBeInTheDocument();
   });
 });
 

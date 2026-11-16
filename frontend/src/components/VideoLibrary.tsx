@@ -4,7 +4,7 @@ import { api, ApiError } from "../services/api";
 import { useUploads } from "./UploadQueue";
 import { formatBitrate, formatBytes, formatDuration, formatTime, since } from "../lib/format";
 import {
-  applyLibraryFilters, filtersActive, NO_FILTERS, SORT_LABEL, uploaders, videoNotes,
+  applyLibraryFilters, filtersActive, NO_FILTERS, SORT_LABEL, uploaderName, uploaders, videoNotes,
   type AnalyticsFilter, type LibraryFilters, type SortKey,
 } from "../lib/libraryFilters";
 import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, PreviewConfig, User, Video } from "../types/api";
@@ -137,7 +137,7 @@ export function VideoLibrary({ videos, loading, user, onChanged, onCreateStream 
             <select className="input w-auto max-w-[11rem] max-sm:max-w-none max-sm:flex-1" value={filters.uploader} aria-label="Filter by uploader"
               onChange={(e) => setFilter({ uploader: e.target.value })}>
               <option value="">Anyone</option>
-              {people.map((p) => <option key={p} value={p}>{p === "-" ? "Added on server" : p}</option>)}
+              {people.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           )}
           <AnalyticsFilterSelect value={filters.analytics} onChange={(a) => setFilter({ analytics: a })} tree={rig.analytics} />
@@ -407,9 +407,10 @@ function FilePlayer({ v, onClose, onConvert, job }: {
           controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} />
       )}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}</span>
+        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)} · uploaded by {uploaderName(v)}</span>
         <a className="btn-secondary" href={videoFileUrl(v.id, true)} download={v.filename}><DownloadIcon /> Download</a>
       </div>
+      <VideoAnalyticsLine v={v} className="mt-2" />
     </Modal>
   );
 }
@@ -614,7 +615,7 @@ const VideoRow = memo(function VideoRow(p: ItemProps) {
           <span>{v.display_width ?? v.width}×{v.display_height ?? v.height}</span>
           <span>{v.video_codec}</span>
           <span>{formatBytes(v.size_bytes)}</span>
-          <span className="truncate">{v.uploaded_by ? `by ${v.uploaded_by === "anonymous" ? (v.uploaded_device ?? "anonymous") : v.uploaded_by}` : "added on server"}</span>
+          <span className="truncate" data-testid="row-uploader">by {uploaderName(v)}</span>
           {v.streams_using > 0 && <span className="text-emerald-600 dark:text-emerald-400">{v.streams_using} stream{v.streams_using > 1 ? "s" : ""}</span>}
         </div>
       </div>
@@ -635,33 +636,46 @@ const VideoRow = memo(function VideoRow(p: ItemProps) {
   );
 });
 
-/** Analytics this video is in, each linking to its page (at most 3 shown, then "+N"). */
-export function AnalyticsChips({ v }: { v: Video }) {
-  const list = v.analytics ?? [];
-  const shown = list.slice(0, 3);
+/** Analytics this video is in, each linking to its page. At most 3 are shown; "+N" shows the rest. */
+export function AnalyticsChips({ v, all = false }: { v: Video; all?: boolean }) {
+  const [open, setOpen] = useState(all);
+  // one chip per analytics, even if the video sits in it more than once
+  const list = (v.analytics ?? []).filter((a, i, xs) => xs.findIndex((b) => b.id === a.id) === i);
+  const shown = open ? list : list.slice(0, 3);
   return (
     <div className="flex flex-wrap gap-1" data-testid="analytics-chips">
       {shown.map((a) => (
-        <Link key={a.slot_id} to={`/analytics/${a.id}`} title={`Open ${a.name}`}
+        <Link key={a.id} to={`/analytics/${a.id}`} title={`Open ${a.name}`}
           className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand hover:underline">{a.name}</Link>
       ))}
       {list.length > shown.length && (
-        <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
-          title={list.slice(3).map((a) => a.name).join(", ")}>+{list.length - shown.length}</span>
+        <button type="button" className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted hover:text-fg"
+          onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+          title={list.slice(3).map((a) => a.name).join(", ")} aria-label={`Show ${list.length - shown.length} more analytics`}>
+          +{list.length - shown.length}
+        </button>
       )}
     </div>
   );
 }
 
-/** "Uploaded by alice · 2h ago", or "Added on server" for files copied straight into the video folder. */
+/** "Analytics: PPE · FireSmoke", or a hint when the video is not in any analytics yet. */
+export function VideoAnalyticsLine({ v, className = "" }: { v: Video; className?: string }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-2 text-xs ${className}`} data-testid="video-analytics">
+      <span className="text-muted">Analytics:</span>
+      {v.analytics?.length ? <AnalyticsChips v={v} all />
+        : <span className="italic text-subtle">not in any analytics yet (use the tag button to add it)</span>}
+    </div>
+  );
+}
+
+/** "Uploaded by admin · 2h ago" or "Uploaded by alice": administrators (and anything added before
+ * login existed) show as "admin", everyone else by user name. */
 export function UploaderLine({ v, now }: { v: Video; now?: number }) {
-  if (!v.uploaded_by) {
-    return <div className="truncate text-xs text-muted" data-testid="uploader">Added on server</div>;
-  }
-  const anon = v.uploaded_by === "anonymous";
-  const who = anon ? (v.uploaded_device || v.uploaded_from || "anonymous") : v.uploaded_by;
+  const who = uploaderName(v);
   const when = v.uploaded_at ? `${since(v.uploaded_at, now)} ago` : null;
-  const full = [v.uploaded_by, v.uploaded_at && new Date(v.uploaded_at).toLocaleString(), v.uploaded_from, v.uploaded_device]
+  const full = [who, v.uploaded_at && new Date(v.uploaded_at).toLocaleString(), v.uploaded_from, v.uploaded_device]
     .filter(Boolean).join(" · ");
   return (
     <div className="truncate text-xs text-muted" data-testid="uploader" title={full}>
@@ -695,14 +709,20 @@ export function VideoDetails({ v, onClose }: { v: Video; onClose: () => void }) 
     <Modal title={v.filename} onClose={onClose}>
       <dl data-testid="video-details">
         <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Upload</h3>
+        <Row k="Uploaded by">{uploaderName(v)}</Row>
         {v.uploaded_by ? (
           <>
-            <Row k="Uploaded by">{v.uploaded_by}</Row>
+            {v.uploaded_by !== uploaderName(v) && <Row k="Account">{v.uploaded_by === "anonymous" ? "login was off" : v.uploaded_by}</Row>}
             <Row k="When">{v.uploaded_at ? `${new Date(v.uploaded_at).toLocaleString()} (${since(v.uploaded_at)} ago)` : null}</Row>
             <Row k="From address">{v.uploaded_from}</Row>
             <Row k="Device">{v.uploaded_device}</Row>
           </>
-        ) : <Row k="Uploaded by">Added on server (copied into the video folder, not uploaded through this app)</Row>}
+        ) : <Row k="How">Copied onto the server (not uploaded through this app)</Row>}
+        <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Analytics</h3>
+        <div className="py-1.5">
+          {v.analytics?.length ? <AnalyticsChips v={v} all />
+            : <span className="text-sm italic text-subtle">Not in any analytics yet.</span>}
+        </div>
         <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted">File</h3>
         <Row k="Path"><span className="font-mono text-xs">{v.rel_path}</span></Row>
         <Row k="Size">{formatBytes(v.size_bytes)}</Row>
@@ -802,9 +822,10 @@ function PreviewPlayer({ v, clip, onClose }: { v: Video; clip: number; onClose: 
         ))}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}</span>
+        <span>{v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)} · uploaded by {uploaderName(v)}</span>
         <a className="btn-secondary" href={videoFileUrl(v.id, true)} download={v.filename}><DownloadIcon /> Download full video</a>
       </div>
+      <VideoAnalyticsLine v={v} className="mt-2" />
     </Modal>
   );
 }

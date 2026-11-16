@@ -65,7 +65,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const items: { to: string; label: string; icon: ReactNode; badge?: ReactNode }[] = [
     { to: "/streams", label: "Streams", icon: <GridIcon />,
       badge: problems ? <Badge tone="bad">{problems}</Badge> : streams ? <Badge>{streams.length}</Badge> : null },
-    { to: "/library", label: "Video library", icon: <FilmIcon />, badge: videos ? <Badge>{videos.length}</Badge> : null },
+    { to: "/library", label: "Shared video library", icon: <FilmIcon />, badge: videos ? <Badge>{videos.length}</Badge> : null },
     { to: "/health", label: "Health", icon: <ServerIcon /> },
     { to: "/events", label: "Events", icon: <ActivityIcon /> },
   ];

@@ -14,23 +14,61 @@ import { queueText } from "../components/StreamsTable";
 import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import { blockedShape, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
 import {
-  CameraIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, PlusIcon, SearchIcon, StopIcon,
+  CameraIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, SearchIcon, StopIcon,
   TrashIcon, UploadIcon,
 } from "../components/icons";
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "camera";
 
-/** One analytics (e.g. People › PPE): its video placeholders and the RTSP streams running them. */
+/** One analytics (e.g. People › PPE): its videos and the RTSP streams running them.
+ * Upload (or drop) videos straight onto the page: they go into the shared library and are added here. */
 export function AnalyticsPage() {
   const addr = useRtspAddress();
   const id = Number(useParams().id);
-  const { user, refreshAnalytics, refreshStreams } = useRig();
+  const { user, videos, refreshAnalytics, refreshStreams, refreshVideos } = useRig();
   const toast = useToast();
+  const { enqueue } = useUploads();
   const { data, error, loading, refresh } = usePolling(() => api.analytics(id), 2000, [id]);
-  const [adding, setAdding] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [uploading, setUploading] = useState<string[]>([]);
+  const [over, setOver] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const changed = () => { refresh(); refreshAnalytics(); refreshStreams(); };
+  const changed = () => { refresh(); refreshAnalytics(); refreshStreams(); refreshVideos(); };
+
+  /** Add library videos to this analytics (each once; repeats are skipped by the server). */
+  const addVideos = async (ids: number[], label: string) => {
+    try {
+      const r = await api.assignVideos(ids, [id]);
+      toast("ok", r.created.length ? `${label} added to ${data?.name ?? "this analytics"}.` : `${label} is already here.`);
+      changed();
+    } catch (e) {
+      toast("bad", (e as ApiError).message);
+    }
+  };
+  /** Upload files into the shared library and add each one here when it finishes. */
+  const uploadFiles = (files: File[]) => {
+    const vids = files.filter(isVideoFile);
+    if (!vids.length) { toast("bad", "Those are not video files."); return; }
+    if (vids.length < files.length) toast("info", `${files.length - vids.length} non-video file(s) skipped.`);
+    for (const f of vids) {
+      // Already in the shared library (same name and size): add that one instead of uploading again.
+      const same = videos?.find((x) => x.filename === f.name && x.size_bytes === f.size);
+      if (same) { addVideos([same.id], `${f.name} (already in the library)`); continue; }
+      setUploading((u) => [...u, f.name]);
+      const done = () => setUploading((u) => { const i = u.indexOf(f.name); return i < 0 ? u : [...u.slice(0, i), ...u.slice(i + 1)]; });
+      enqueue([f], async (video: Video) => { done(); await addVideos([video.id], video.filename); },
+        (message) => { done(); toast("bad", `${f.name}: ${message}`); });
+    }
+  };
+  const onDrop = (e: DragEvent) => {
+    if (!user.can_write) return;
+    e.preventDefault();
+    (e.nativeEvent as globalThis.DragEvent & { rigHandled?: boolean }).rigHandled = true;
+    setOver(false);
+    uploadFiles(Array.from(e.dataTransfer.files));
+  };
 
   if (loading && !data) return <PageSkeleton />;
   if (error && !data) return <ErrorBox>{error.message}</ErrorBox>;
@@ -59,9 +97,22 @@ export function AnalyticsPage() {
     }
   };
 
+  const inHere = new Set(data.slots.map((s) => s.video?.id).filter((x): x is number => x != null));
   return (
-    <div className="space-y-5">
+    <div className={`space-y-5 rounded-xl ${over ? "outline-dashed outline-2 outline-offset-4 outline-brand" : ""}`}
+      onDragOver={(e) => { if (user.can_write && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setOver(true); } }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setOver(false); }} onDrop={onDrop}>
+      <input ref={fileInput} type="file" multiple className="hidden" accept="video/*,.mkv,.ts,.mts,.m2ts"
+        data-testid="analytics-upload-input"
+        onChange={(e) => { uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
       <Header data={data} canWrite={user.can_write} onSaved={changed} />
+      {user.can_write && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn-primary" onClick={() => fileInput.current?.click()}><UploadIcon /> Upload video</button>
+          <button className="btn-secondary" onClick={() => setPicking(true)}><FilmIcon /> Add from shared library</button>
+          <span className="text-xs text-muted">or drop video files anywhere on this page. Uploads also appear in the shared library.</span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Stat label="Videos" value={data.slots.length} />
         <Stat label="Streams" value={data.streams} />
@@ -93,39 +144,41 @@ export function AnalyticsPage() {
         </div>
       </div>
 
-      {data.slots.length === 0 ? (
-        <div className="card flex flex-col items-center gap-3 px-6 py-12 text-center">
+      {data.slots.length === 0 && uploading.length === 0 ? (
+        <div className="card flex flex-col items-center gap-3 px-6 py-12 text-center" data-testid="analytics-empty">
           <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-soft text-brand"><FilmIcon className="h-6 w-6" /></span>
           <div>
             <div className="font-semibold">No videos for {data.name} yet</div>
             <p className="mt-1 max-w-md text-sm text-muted">
-              Add a video placeholder for each test video this analytics needs: give it a title and a description
-              (scene, time of day, what should be detected), then upload or pick the video and run RTSP streams from it.
+              {user.can_write
+                ? "Upload a video (or drop it here), or add one that is already in the shared library. Then run RTSP streams from it."
+                : "An operator or admin can upload videos for this analytics."}
             </p>
           </div>
-          {user.can_write && <button className="btn-primary" onClick={() => setAdding(true)}><PlusIcon /> Add video placeholder</button>}
+          {user.can_write && (
+            <div className="flex flex-wrap justify-center gap-2">
+              <button className="btn-primary" onClick={() => fileInput.current?.click()}><UploadIcon /> Upload video</button>
+              <button className="btn-secondary" onClick={() => setPicking(true)}><FilmIcon /> Add from shared library</button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {data.slots.map((sl) => (
             <SlotCard key={sl.id} slot={sl} analyticsName={data.name} canWrite={user.can_write} onChanged={changed} />
           ))}
-          {user.can_write && (
-            <button className="card flex min-h-[12rem] flex-col items-center justify-center gap-2 border-dashed text-muted transition-colors hover:border-brand hover:text-brand"
-              onClick={() => setAdding(true)}>
-              <PlusIcon className="h-6 w-6" /> <span className="text-sm font-medium">Add video placeholder</span>
-            </button>
-          )}
+          {uploading.map((name, i) => (
+            <div key={`${name}-${i}`} className="card relative min-h-[12rem] overflow-hidden" data-testid="analytics-uploading">
+              <UploadingOverlay name={name} />
+            </div>
+          ))}
         </div>
       )}
 
-      {adding && (
-        <SlotDialog title={`New video placeholder in ${data.name}`} onClose={() => setAdding(false)}
-          onSave={async (title, description) => {
-            await api.createSlot(id, { title, description });
-            setAdding(false);
-            changed();
-          }} />
+      {picking && (
+        <PickVideoDialog current={null} exclude={inHere} onClose={() => setPicking(false)}
+          onUpload={() => { setPicking(false); fileInput.current?.click(); }}
+          onPick={(v) => { setPicking(false); addVideos([v.id], v.filename); }} />
       )}
       {confirmStop && (
         <ConfirmDialog title={`Stop all streams of ${data.name}?`} confirmLabel="Stop all" danger
@@ -197,7 +250,7 @@ function Header({ data, canWrite, onSaved }: { data: AnalyticsDetail; canWrite: 
   );
 }
 
-// ------------------------------------------------------------------ placeholder card
+// ------------------------------------------------------------------ video card
 function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
   slot: AnalyticsSlot; analyticsName: string; canWrite: boolean; onChanged: () => void;
 }) {
@@ -232,8 +285,13 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
       toast("bad", `${f.name}: ${message}`);
     });
   };
+  // Only an empty (older) card takes a dropped file itself; on a card with a video the drop goes to the
+  // page, which adds the file to this analytics as a new card instead of replacing this one.
+  const takesDrop = canWrite && !v;
   const onDrop = (e: DragEvent) => {
-    if (!canWrite) return;
+    if (!takesDrop) return;
+    e.preventDefault();
+    e.stopPropagation();
     (e.nativeEvent as globalThis.DragEvent & { rigHandled?: boolean }).rigHandled = true;
     setOver(false);
     attachUpload(Array.from(e.dataTransfer.files));
@@ -241,7 +299,7 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
 
   return (
     <div className={`card flex flex-col overflow-hidden transition-shadow ${over ? "ring-2 ring-brand" : ""}`}
-      onDragOver={(e) => { if (canWrite) { e.preventDefault(); setOver(true); } }}
+      onDragOver={(e) => { if (takesDrop) { e.preventDefault(); e.stopPropagation(); setOver(true); } }}
       onDragLeave={() => setOver(false)} onDrop={onDrop}>
       <input ref={fileInput} type="file" className="hidden" accept="video/*,.mkv,.ts,.mts,.m2ts"
         onChange={(e) => { attachUpload(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
@@ -279,15 +337,15 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
             <h3 className="min-w-0 flex-1 font-semibold leading-snug">{slot.title}</h3>
             {canWrite && (
               <div className="flex shrink-0 gap-0.5">
-                <button className="btn-ghost p-1" title="Edit title and description" aria-label="Edit" onClick={() => setDialog("edit")}><EditIcon className="h-3.5 w-3.5" /></button>
-                {v && <button className="btn-ghost p-1" title="Change video" aria-label="Change video" onClick={() => setDialog("pick")}><FilmIcon className="h-3.5 w-3.5" /></button>}
-                <button className="btn-ghost p-1" title="Remove placeholder" aria-label="Remove placeholder" onClick={() => setDialog("remove")}><TrashIcon className="h-3.5 w-3.5" /></button>
+                <button className="btn-ghost p-1" title="Edit title and notes" aria-label="Edit" onClick={() => setDialog("edit")}><EditIcon className="h-3.5 w-3.5" /></button>
+                <button className="btn-ghost p-1" title="Remove from this analytics (the video stays in the shared library)"
+                  aria-label="Remove from this analytics" onClick={() => setDialog("remove")}><TrashIcon className="h-3.5 w-3.5" /></button>
               </div>
             )}
           </div>
           {slot.description
             ? <p className="mt-1 whitespace-pre-line text-sm text-muted">{slot.description}</p>
-            : canWrite && <button className="mt-1 text-sm italic text-subtle hover:text-brand" onClick={() => setDialog("edit")}>Add a description…</button>}
+            : canWrite && <button className="mt-1 text-sm italic text-subtle hover:text-brand" onClick={() => setDialog("edit")}>Add notes…</button>}
           {v && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted">
               <span className="truncate font-mono" title={v.rel_path}>{v.filename}</span>
@@ -335,7 +393,7 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
       </div>
 
       {dialog === "edit" && (
-        <SlotDialog title="Edit video placeholder" initialTitle={slot.title} initialDescription={slot.description ?? ""}
+        <SlotDialog title="Edit title and notes" initialTitle={slot.title} initialDescription={slot.description ?? ""}
           onClose={() => setDialog(null)}
           onSave={async (title, description) => {
             await api.updateSlot(slot.id, { title, description });
@@ -365,8 +423,8 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
             message={<>'{slot.title}' still has {slot.streams.length} stream(s). Delete them first, so no edge loses its
               camera by accident. The video itself stays in the library either way.</>} />
         ) : (
-          <ConfirmDialog title={`Remove '${slot.title}'?`} confirmLabel="Remove" danger onCancel={() => setDialog(null)}
-            message="The placeholder and its description are removed. The video stays in the library."
+          <ConfirmDialog title={`Remove '${slot.title}' from ${analyticsName}?`} confirmLabel="Remove" danger onCancel={() => setDialog(null)}
+            message="It is no longer listed under this analytics (its notes are removed). The video stays in the shared library and in any other analytics."
             onConfirm={async () => {
               setDialog(null);
               try { await api.deleteSlot(slot.id); onChanged(); } catch (e) { toast("bad", (e as ApiError).message); }
@@ -382,7 +440,7 @@ function UploadingOverlay({ name }: { name: string }) {
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-surface/85 px-4 text-center text-sm">
       <Spinner />
       <div className="max-w-full truncate">Uploading <b>{name}</b>…</div>
-      <div className="text-xs text-muted">Progress is shown in the Uploads panel. It is attached here when it finishes.</div>
+      <div className="text-xs text-muted">Progress is shown in the Uploads panel. It is added here and to the shared library when it finishes.</div>
     </div>
   );
 }
@@ -464,7 +522,7 @@ function SlotDialog({ title, initialTitle = "", initialDescription = "", onClose
             placeholder="e.g. Warehouse gate, day shift" />
         </div>
         <div>
-          <label className="label" htmlFor="slot-desc">Description</label>
+          <label className="label" htmlFor="slot-desc">Notes</label>
           <textarea id="slot-desc" className="input min-h-[6rem]" value={d} onChange={(e) => setD(e.target.value)}
             placeholder="Scene, camera angle, time of day, what the analytics should detect, expected events" />
         </div>
@@ -478,15 +536,15 @@ function SlotDialog({ title, initialTitle = "", initialDescription = "", onClose
   );
 }
 
-function PickVideoDialog({ current, onClose, onPick, onUpload }: {
-  current: number | null; onClose: () => void; onPick: (v: Video) => void; onUpload: () => void;
+function PickVideoDialog({ current, exclude, onClose, onPick, onUpload }: {
+  current: number | null; exclude?: Set<number>; onClose: () => void; onPick: (v: Video) => void; onUpload: () => void;
 }) {
   const { videos, system } = useRig();
   const [q, setQ] = useState("");
   const free = system?.disks?.videos?.free;
   const list = (videos ?? []).filter((v) => v.filename.toLowerCase().includes(q.toLowerCase()));
   return (
-    <Modal title="Choose a video" onClose={onClose} wide>
+    <Modal title="Choose a video from the shared library" onClose={onClose} wide>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[14rem] flex-1">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-subtle" />
@@ -498,7 +556,8 @@ function PickVideoDialog({ current, onClose, onPick, onUpload }: {
       <ul className="mt-3 max-h-[60vh] divide-y divide-line overflow-y-auto rounded-lg border border-line">
         {list.length === 0 && <li className="p-4 text-sm text-muted">No videos match.</li>}
         {list.map((v) => {
-          const usable = v.status === "READY" && v.compat_mode !== "reject";
+          const here = !!exclude?.has(v.id);
+          const usable = v.status === "READY" && v.compat_mode !== "reject" && !here;
           return (
             <li key={v.id}>
               <button className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-surface-2 disabled:opacity-50"
@@ -511,7 +570,8 @@ function PickVideoDialog({ current, onClose, onPick, onUpload }: {
                   <div className="text-xs text-muted">{formatDuration(v.duration_s)} · {v.width}×{v.height} · {v.video_codec} · {formatBytes(v.size_bytes)}</div>
                 </div>
                 {v.id === current && <Pill tone="info">current</Pill>}
-                {!usable && <Pill tone="bad">{v.status !== "READY" ? v.status.toLowerCase() : "not supported"}</Pill>}
+                {here && <Pill tone="info">already here</Pill>}
+                {!usable && !here && <Pill tone="bad">{v.status !== "READY" ? v.status.toLowerCase() : "not supported"}</Pill>}
               </button>
             </li>
           );
@@ -646,7 +706,7 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
         </div>
         {blockedShape(video, config?.output) && (
           <WarnBox>This video is {SHAPE_TEXT[video.shape ?? "other"]}, not 16:9, so it can't be streamed. Make a 16:9 copy
-            in the Video library (blurred bars, black bars or crop) and choose the copy for this placeholder.</WarnBox>
+            in the shared library (blurred bars, black bars or crop), then add the copy to this analytics.</WarnBox>
         )}
         <OutputSizeField out={config?.output} video={video} value={outputSize} onChange={setOutputSize}
           isAdmin={!!user?.is_admin} idPrefix="run" />

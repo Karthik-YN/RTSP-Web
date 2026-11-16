@@ -134,11 +134,17 @@ describe("uploader", () => {
     expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by alice · 2h 0m ago");
   });
 
-  it("names the device when there was no login, and files copied onto the server", () => {
+  it("shows admin for admin accounts, uploads with login off and files copied onto the server", () => {
     const { rerender } = render(<UploaderLine v={{ ...up, uploaded_by: "anonymous" }} now={now} />);
-    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by Windows · Chrome");
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by admin");
     rerender(<UploaderLine v={video} now={now} />);
-    expect(screen.getByTestId("uploader")).toHaveTextContent("Added on server");
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by admin");
+    // the server marks admin accounts; the real account is never shown on the card
+    rerender(<UploaderLine v={{ ...up, uploaded_by: "rtsp-admin", uploader: "admin" }} now={now} />);
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by admin · 2h 0m ago");
+    expect(screen.getByTestId("uploader")).not.toHaveTextContent("rtsp-admin");
+    rerender(<UploaderLine v={{ ...up, uploaded_by: "rtsp-user", uploader: "rtsp-user" }} now={now} />);
+    expect(screen.getByTestId("uploader")).toHaveTextContent("Uploaded by rtsp-user");
   });
 
   it("names the container by the file's own format", () => {
@@ -165,5 +171,32 @@ describe("analytics chips", () => {
     expect(screen.getByRole("link", { name: "PPE" })).toHaveAttribute("href", "/analytics/1");
     expect(screen.getAllByRole("link")).toHaveLength(3);
     expect(screen.getByText("+2")).toHaveAttribute("title", "Parking, Elephant");
+  });
+
+  it("shows the rest when +N is clicked", async () => {
+    const names = ["PPE", "FireSmoke", "CrowdDensity", "Parking", "Elephant"];
+    const v = { ...video, analytics: names.map((name, i) => ({ id: i + 1, name, slot_id: 10 + i })) } as Video;
+    render(<MemoryRouter><AnalyticsChips v={v} /></MemoryRouter>);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Show 2 more analytics" }));
+    expect(screen.getAllByRole("link")).toHaveLength(5);
+    expect(screen.getByRole("link", { name: "Elephant" })).toHaveAttribute("href", "/analytics/5");
+  });
+
+  it("lists every analytics in the video's details and its player", () => {
+    const v = { ...video, uploaded_by: "rtsp-user", uploader: "rtsp-user",
+      analytics: [{ id: 3, name: "CrowdDensity", slot_id: 1 }, { id: 4, name: "RegionCount", slot_id: 2 }] } as Video;
+    const { unmount } = render(<MemoryRouter><VideoDetails v={v} onClose={() => {}} /></MemoryRouter>);
+    expect(screen.getByRole("link", { name: "CrowdDensity" })).toHaveAttribute("href", "/analytics/3");
+    expect(screen.getByRole("link", { name: "RegionCount" })).toHaveAttribute("href", "/analytics/4");
+    expect(screen.getByTestId("video-details")).toHaveTextContent("Uploaded byrtsp-user");
+    unmount();
+    render(<MemoryRouter><VideoPlayer v={v} onClose={() => {}} /></MemoryRouter>);
+    expect(screen.getByTestId("video-analytics")).toHaveTextContent("CrowdDensity");
+    expect(screen.getByTestId("video-analytics")).toHaveTextContent("RegionCount");
+  });
+
+  it("says so when a video is in no analytics", () => {
+    render(<MemoryRouter><VideoDetails v={{ ...video, analytics: [] } as Video} onClose={() => {}} /></MemoryRouter>);
+    expect(screen.getByTestId("video-details")).toHaveTextContent("Not in any analytics yet.");
   });
 });

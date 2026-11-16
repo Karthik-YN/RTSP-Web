@@ -113,6 +113,11 @@ class UserStore:
             self._load()
             return [User(n, r) for n, (r, _) in sorted(self._users.items())]
 
+    def admin_names(self) -> set[str]:
+        with self._lock:
+            self._load()
+            return {n for n, (r, _) in self._users.items() if r == "admin"}
+
     def set_user(self, username: str, role: str, password: str | None) -> None:
         """Create or update a user. ``password=None`` keeps the current password."""
         if role not in ROLES:
@@ -152,6 +157,21 @@ class UserStore:
         os.replace(tmp, self.path)
         with self._lock:
             self._mtime = None  # force reload
+
+
+ADMIN_UPLOADER = "admin"
+
+
+def uploader_label(uploaded_by: str | None, admins: set[str] | None = None) -> str:
+    """Who added a video, as shown in the library.
+
+    "admin" for anything added by an administrator: uploads by an admin account, uploads made while
+    login was off ("anonymous") and files copied straight onto the server (no uploader). Everyone else
+    is shown by user name. The real account stays in ``uploaded_by`` for the record.
+    """
+    if not uploaded_by or uploaded_by == "anonymous" or uploaded_by in (admins or set()):
+        return ADMIN_UPLOADER
+    return uploaded_by
 
 
 class LoginThrottle:
