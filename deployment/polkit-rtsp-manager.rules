@@ -1,0 +1,13 @@
+// /etc/polkit-1/rules.d/50-rtsp-manager.rules
+// Lets the service account "rtspmgr" start/restart/stop ONLY mediamtx.service
+// (so the dashboard can bring MediaMTX back up) without sudo or root.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "mediamtx.service" &&
+        subject.user == "rtspmgr") {
+        var verb = action.lookup("verb");
+        if (verb == "start" || verb == "restart" || verb == "stop") {
+            return polkit.Result.YES;
+        }
+    }
+});

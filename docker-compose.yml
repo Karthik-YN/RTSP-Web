@@ -1,0 +1,67 @@
+# RIG-02 in Docker: the whole rig is one container.
+#
+#   cp .env.example .env        # set RTSPM_PUBLIC_RTSP_HOST to the server's name or IP
+#   docker compose up -d --build
+#   open http://<server>:8080
+#
+# Works on any Docker host (Linux server, Proxmox VM, Mac, Windows). RTSP is
+# TCP-only, so plain port publishing is enough.
+#   Remote access through Cloudflare:  docker compose --profile cloudflare up -d
+#   Company NAS as the video store:     see docker-compose.nas.yml
+services:
+  rig02:
+    build: .
+    image: rig02-rtsp-manager:latest
+    container_name: rig02
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RTSPM_PUBLIC_RTSP_HOST: ${RTSPM_PUBLIC_RTSP_HOST:-localhost}
+      RTSPM_PUBLIC_RTSP_PORT: ${RIG02_RTSP_PORT:-8554}
+      # paths inside the container are fixed; .env must not move them
+      RTSPM_ENV_FILE: /dev/null
+      RTSPM_DATA_DIR: /data/state
+      RTSPM_VIDEO_DIR: /data/videos
+      RTSPM_FRONTEND_DIST: /app/frontend/dist
+      RTSPM_MEDIAMTX_CONTROL: process
+      RTSPM_MEDIAMTX_CONFIG: /app/deployment/mediamtx.yml
+      RTSPM_PUBLISH_RTSP_BASE: rtsp://127.0.0.1:8554
+      RTSPM_MEDIAMTX_API_URL: http://127.0.0.1:9997
+      RTSPM_MEDIAMTX_HLS_URL: http://127.0.0.1:8888
+      # the container sees only its private 172.x address, not the server's
+      RTSPM_ADDRESS_WATCH_INTERFACES: "false"
+    ports:
+      - "${RIG02_HTTP_PORT:-8080}:8080"   # dashboard + API
+      - "${RIG02_RTSP_PORT:-8554}:8554"   # RTSP (TCP)
+    volumes:
+      - rig02-data:/data
+    stop_grace_period: 30s
+    # FFmpeg publishers are many small processes; keep the defaults generous.
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # Optional: publish the dashboard on the internet through a Cloudflare Tunnel.
+  # Needs TUNNEL_TOKEN, RTSPM_CF_ACCESS_TEAM and RTSPM_CF_ACCESS_AUD in .env and a
+  # Cloudflare Access policy on the hostname (docs/DEPLOYMENT.md, "Remote access
+  # via Cloudflare"). No inbound ports. In the Cloudflare dashboard, point the
+  # public hostname at http://rig02:8080. For RTSP over WARP, add the server's
+  # LAN IP (/32) as a private network route on the same tunnel.
+  cloudflared:
+    profiles: ["cloudflare"]
+    image: cloudflare/cloudflared:2026.10.7
+    container_name: rig02-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      rig02:
+        condition: service_healthy
+
+volumes:
+  rig02-data:

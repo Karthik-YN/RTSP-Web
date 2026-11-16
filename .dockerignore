@@ -1,0 +1,17 @@
+.git
+backend/.venv
+frontend/node_modules
+storage
+**/__pycache__
+.pytest_cache
+docs/reports
+tests/.fixtures/long_2h.ts
+tests/.fixtures/long_2h.mkv
+tests/.fixtures/perf_*
+tests/.fixtures/large_*
+tests/.fixtures/_chunk*
+.claude
+bin
+.env
+*.env
+!.env.example

@@ -1,0 +1,9 @@
+# Debian 12 with systemd as PID 1, to run scripts/install.sh exactly as on the VM.
+FROM debian:12
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq systemd systemd-sysv dbus polkitd sudo curl ca-certificates iproute2 procps python3 >/dev/null \
+ && rm -f /lib/systemd/system/multi-user.target.wants/getty* \
+ && rm -rf /var/lib/apt/lists/*
+COPY . /src
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

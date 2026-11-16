@@ -1,0 +1,10 @@
+# Lead-in spike (scripts/spike_leadin.py) on Debian 12 with GStreamer RTSP readers.
+#   docker build -f deployment/test/Dockerfile.spike -t rig02-spike .   (after building rig02-test:debian12)
+FROM rig02-test:debian12
+USER root
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends gstreamer1.0-tools \
+      gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav >/dev/null \
+ && rm -rf /var/lib/apt/lists/*
+COPY scripts/spike_leadin.py scripts/spike_leadin.py
+USER tester
+CMD ["backend/.venv/bin/python", "scripts/spike_leadin.py", "--out", "/out"]

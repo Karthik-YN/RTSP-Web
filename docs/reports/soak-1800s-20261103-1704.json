@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-11-03T11:34:19.110418+00:00",
+  "requested_s": 1800,
+  "wall_s": 1800.2,
+  "media_span_s": 1800.03,
+  "ratio_wall_to_media": 1.0001,
+  "packets": 53947,
+  "expected_packets": 53947,
+  "max_step_s": 0.0667,
+  "duplicate_pts": 0,
+  "large_backward_jumps": 0,
+  "loop_period_s": 12.012,
+  "loop_count": 149,
+  "expected_loops": 149,
+  "publisher_restarts": 0,
+  "status": "RUNNING",
+  "reader_exit_code": 0,
+  "reader_stderr": "[h264 @ 0xa4cc20380] reference picture missing during reorder\n[h264 @ 0xa4cc20380] Missing reference picture, default is 0\n"
+}

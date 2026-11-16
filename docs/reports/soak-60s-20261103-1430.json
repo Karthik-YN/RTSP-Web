@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-11-03T09:00:02.956993+00:00",
+  "requested_s": 60,
+  "wall_s": 60.0,
+  "media_span_s": 59.89,
+  "ratio_wall_to_media": 1.002,
+  "packets": 1794,
+  "expected_packets": 1795,
+  "max_step_s": 0.0667,
+  "duplicate_pts": 0,
+  "large_backward_jumps": 0,
+  "loop_period_s": 12.012,
+  "loop_count": 4,
+  "expected_loops": 4,
+  "publisher_restarts": 0,
+  "status": "RUNNING",
+  "reader_exit_code": 0,
+  "reader_stderr": "[h264 @ 0xc1d048380] co located POCs unavailable\n[h264 @ 0xc1d048380] mmco: unref short failure\n"
+}

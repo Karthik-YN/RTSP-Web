@@ -1,0 +1,535 @@
+"""MediaMTX health monitoring, inspection and control.
+
+* Health = the local Control API answers (``/v3/paths/list``). Polled every
+  ``health_interval_s``; ``health_fail_threshold`` consecutive failures mark
+  MediaMTX DOWN (default 2 s x 2 => detected in <= ~5 s, target is 10 s).
+* The path list is the source of truth for "is this stream actually being
+  published" (a live FFmpeg PID is not proof of a healthy RTSP path).
+* Control modes: ``systemd`` (systemctl via a polkit rule, no root),
+  ``process`` (backend owns a MediaMTX child; dev/tests), ``external``.
+* MediaMTX restarting does NOT bring publishers back by itself: the
+  supervisor is notified through ``on_down``/``on_up`` callbacks and
+  republishes every stream whose desired state is RUNNING.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import socket
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from typing import Awaitable, Callable
+
+import httpx
+
+from ..config import Settings
+
+log = logging.getLogger(__name__)
+
+UP, DOWN, UNKNOWN = "UP", "DOWN", "UNKNOWN"
+BOOT_GRACE_S = 20.0  # MediaMTX may take this long to come up at backend start before it is an outage
+PREVIEW_ACTIVE_S = 20.0  # a dashboard preview polls its playlist every few seconds
+
+
+def addr_ip(remote_addr: str | None) -> str | None:
+    """'192.168.1.5:61080' -> '192.168.1.5'; '[fe80::1]:554' -> 'fe80::1'."""
+    if not remote_addr:
+        return None
+    host = remote_addr.rsplit(":", 1)[0] if remote_addr.count(":") == 1 or remote_addr.startswith("[") \
+        else remote_addr
+    return host.strip("[]")
+
+
+class HostnameCache:
+    """Reverse-DNS names for viewer IPs, looked up in the background (never blocks a request)."""
+
+    def __init__(self, ttl_s: float = 600.0):
+        self.ttl_s = ttl_s
+        self._names: dict[str, tuple[float, str | None]] = {}
+        self._pending: set[str] = set()
+        self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rdns")
+
+    def get(self, ip: str | None) -> str | None:
+        if not ip:
+            return None
+        hit = self._names.get(ip)
+        if (hit is None or time.monotonic() - hit[0] > self.ttl_s) and ip not in self._pending:
+            self._pending.add(ip)
+            self._pool.submit(self._lookup, ip)
+        return hit[1] if hit else None
+
+    def _lookup(self, ip: str) -> None:
+        try:
+            name = socket.gethostbyaddr(ip)[0]
+        except (OSError, UnicodeError):
+            name = None
+        self._names[ip] = (time.monotonic(), name if name and name != ip else None)
+        self._pending.discard(ip)
+
+
+@dataclass
+class PathInfo:
+    name: str
+    ready: bool  # a publisher is online (not just a lead-in slate)
+    ready_time: str | None
+    source_type: str | None
+    tracks: list[str]
+    bytes_received: int
+    bytes_sent: int
+    readers: list[dict] = field(default_factory=list)
+    ingest_bps: float | None = None  # publisher -> MediaMTX
+    egress_bps: float | None = None  # MediaMTX -> all readers
+    available: bool = False  # readers get something: the publisher or the lead-in slate
+
+
+class ControlError(RuntimeError):
+    pass
+
+
+class MediaMTXController:
+    """Starts/restarts MediaMTX according to ``mediamtx_control``."""
+
+    def __init__(self, settings: Settings):
+        self.s = settings
+        self.proc: asyncio.subprocess.Process | None = None
+        self._log_file = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def mode(self) -> str:
+        return self.s.mediamtx_control
+
+    async def _systemctl(self, *args: str, timeout: float = 30.0) -> tuple[int, str]:
+        proc = await asyncio.create_subprocess_exec(
+            self.s.systemctl_bin, "--no-ask-password", *args,
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise ControlError(f"systemctl {' '.join(args)} timed out")
+        return proc.returncode or 0, out.decode(errors="replace").strip()
+
+    async def is_active(self) -> bool | None:
+        if self.mode == "systemd":
+            try:
+                rc, out = await self._systemctl("is-active", self.s.mediamtx_service_name, timeout=10)
+            except (ControlError, FileNotFoundError):
+                return None
+            return out.strip() == "active"
+        if self.mode == "process":
+            return self.proc is not None and self.proc.returncode is None
+        return None
+
+    async def start(self) -> str:
+        async with self._lock:
+            if self.mode == "systemd":
+                rc, out = await self._systemctl("start", self.s.mediamtx_service_name)
+                if rc != 0:
+                    raise ControlError(f"systemctl start failed ({rc}): {out[-300:]}")
+                return "start requested via systemd"
+            if self.mode == "process":
+                if self.proc is not None and self.proc.returncode is None:
+                    return "already running"
+                await self._spawn()
+                return f"started MediaMTX process (pid {self.proc.pid})"
+            raise ControlError("MediaMTX is managed externally (RTSPM_MEDIAMTX_CONTROL=external).")
+
+    async def restart(self) -> str:
+        async with self._lock:
+            if self.mode == "systemd":
+                rc, out = await self._systemctl("restart", self.s.mediamtx_service_name)
+                if rc != 0:
+                    raise ControlError(f"systemctl restart failed ({rc}): {out[-300:]}")
+                return "restart requested via systemd"
+            if self.mode == "process":
+                await self._terminate()
+                await self._spawn()
+                return f"restarted MediaMTX process (pid {self.proc.pid})"
+            raise ControlError("MediaMTX is managed externally (RTSPM_MEDIAMTX_CONTROL=external).")
+
+    async def _spawn(self) -> None:
+        if not self.s.mediamtx_config:
+            raise ControlError("RTSPM_MEDIAMTX_CONFIG must be set for process control mode.")
+        log_path = self.s.log_path / "mediamtx.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._log_file is None:
+            self._log_file = open(log_path, "ab")
+        # Own working directory: MediaMTX may write files (e.g. auto-generated
+        # TLS keys for optional servers) into its cwd.
+        cwd = self.s.run_path / "mediamtx"
+        cwd.mkdir(parents=True, exist_ok=True)
+        self.proc = await asyncio.create_subprocess_exec(
+            self.s.mediamtx_bin, str(self.s.mediamtx_config.resolve()),
+            stdin=asyncio.subprocess.DEVNULL, stdout=self._log_file, stderr=self._log_file,
+            start_new_session=True, cwd=cwd,
+        )
+
+    async def _terminate(self) -> None:
+        if self.proc is not None and self.proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                self.proc.terminate()
+            try:
+                await asyncio.wait_for(self.proc.wait(), 5)
+            except asyncio.TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    self.proc.kill()
+                await self.proc.wait()
+
+    async def shutdown(self) -> None:
+        if self.mode == "process":
+            await self._terminate()
+        if self._log_file:
+            self._log_file.close()
+            self._log_file = None
+
+    @property
+    def pid(self) -> int | None:
+        if self.mode == "process" and self.proc and self.proc.returncode is None:
+            return self.proc.pid
+        return None
+
+
+Callback = Callable[[], Awaitable[None]]
+
+
+class MediaMTXService:
+    def __init__(self, settings: Settings):
+        self.s = settings
+        self.controller = MediaMTXController(settings)
+        self.client = httpx.AsyncClient(base_url=settings.mediamtx_api_url,
+                                        timeout=settings.health_request_timeout_s)
+        self.state = UNKNOWN
+        self.consecutive_failures = 0
+        self.last_ok_at: datetime | None = None
+        self.last_ok_mono: float | None = None
+        self.down_since: datetime | None = None
+        self.down_detected_at: datetime | None = None
+        self.last_detection_s: float | None = None
+        self.last_error: str | None = None
+        self.paths: dict[str, PathInfo] = {}
+        self.recoveries = 0
+        self.last_recovery: dict | None = None
+        self.last_control_message: str | None = None
+        self.on_down: list[Callback] = []
+        self.on_up: list[Callback] = []
+        self._task: asyncio.Task | None = None
+        self._last_recover_attempt = 0.0
+        self._stopping = False
+        self._first_fail_mono: float | None = None
+        self.up_event = asyncio.Event()
+        self._prev_bytes: dict[str, tuple[float, int, int]] = {}
+        self.hostnames = HostnameCache()
+        self._preview_seen: dict[str, dict[str, float]] = {}  # path -> {client: last seen (monotonic)}
+        self._peaks: dict[str, tuple[date, int]] = {}  # path -> (day, max RTSP viewers that day)
+        self.slate_paths: dict[str, str] = {}  # path name -> slate file MediaMTX loops on it
+        self._boot_down_pending = False  # down since backend start, outage not reported yet
+        self._sess_cache: tuple[float, dict[str, list[dict]]] = (0.0, {})
+        self._sess_lock = asyncio.Lock()
+
+    # ------------------------------------------------------------ lead-in slates
+    @staticmethod
+    def slate_config(file: str) -> dict:
+        # MediaMTX refuses alwaysAvailable together with runOnDemand (the hold
+        # used by all_others), so this path turns it off.
+        return {"alwaysAvailable": True, "alwaysAvailableFile": file, "runOnDemand": "", "runOnUnDemand": ""}
+
+    async def set_slate(self, name: str, file: str) -> None:
+        """Put the slate on ``name``'s URL (an "always available" path)."""
+        body = self.slate_config(file)
+        r = await self.client.post(f"/v3/config/paths/add/{name}", json=body)
+        if r.status_code == 400 and "already exists" in r.text:
+            if self.slate_paths.get(name) == file or await self._has_slate(name, file):
+                self.slate_paths[name] = file  # e.g. still there after a backend restart
+                return
+            # replacing reloads the path (readers reconnect): only when it really differs
+            r = await self.client.post(f"/v3/config/paths/replace/{name}", json=body)
+        if r.status_code >= 300:
+            raise ControlError(f"MediaMTX refused the lead-in path for '{name}': {r.status_code} {r.text[:200]}")
+        self.slate_paths[name] = file
+
+    async def _has_slate(self, name: str, file: str) -> bool:
+        try:
+            r = await self.client.get(f"/v3/config/paths/get/{name}")
+            j = r.json() if r.status_code == 200 else {}
+        except Exception:
+            return False
+        return bool(j.get("alwaysAvailable")) and j.get("alwaysAvailableFile") == file
+
+    async def clear_slate(self, name: str) -> None:
+        """Remove the slate path; the URL then behaves like any other (fails when stopped)."""
+        self.slate_paths.pop(name, None)
+        r = await self.client.delete(f"/v3/config/paths/delete/{name}")
+        if r.status_code not in (200, 404):
+            raise ControlError(f"MediaMTX did not remove the lead-in path for '{name}': {r.status_code}")
+
+    async def configured_paths(self) -> set[str]:
+        r = await self.client.get("/v3/config/paths/list", params={"itemsPerPage": 10000})
+        r.raise_for_status()
+        return {it["name"] for it in r.json().get("items") or []}
+
+    async def restore_slates(self) -> list[str]:
+        """MediaMTX forgets API-added paths when it restarts: add back any that are missing."""
+        if not self.slate_paths:
+            return []
+        have = await self.configured_paths()
+        restored = []
+        for name, file in list(self.slate_paths.items()):
+            if name not in have:
+                r = await self.client.post(f"/v3/config/paths/add/{name}", json=self.slate_config(file))
+                if r.status_code < 300 or "already exists" in r.text:
+                    restored.append(name)
+        return restored
+
+    # ------------------------------------------------------------ polling
+    async def fetch(self) -> dict[str, PathInfo]:
+        r = await self.client.get("/v3/paths/list", params={"itemsPerPage": 10000})
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        sessions: dict[str, dict] = {}
+        with contextlib.suppress(Exception):
+            rs = await self.client.get("/v3/rtspsessions/list", params={"itemsPerPage": 10000})
+            if rs.status_code == 200:
+                sessions = {x["id"]: x for x in rs.json().get("items", [])}
+        paths = {}
+        for it in items:
+            readers = []
+            for rd in it.get("readers") or []:
+                if str(rd.get("type", "")).startswith("hls"):
+                    continue  # the dashboard preview is not a camera viewer
+                sess = sessions.get(rd.get("id"), {})
+                readers.append({
+                    "type": rd.get("type"), "id": rd.get("id"),
+                    "remote_addr": sess.get("remoteAddr"),
+                    "hostname": self.hostnames.get(addr_ip(sess.get("remoteAddr"))),
+                    "since": sess.get("created"),
+                    "bytes_sent": sess.get("bytesSent"),
+                    "transport": sess.get("transport"),
+                })
+            src = it.get("source") or {}
+            paths[it["name"]] = PathInfo(
+                name=it["name"],
+                # An "always available" path (lead-in slate) is ready/available with
+                # no publisher; only "online" (MediaMTX >= 1.15) means the video is up.
+                ready=bool(it["online"]) if "online" in it else bool(it.get("ready", it.get("available", False))),
+                available=bool(it.get("available", it.get("ready", False))),
+                ready_time=(it.get("onlineTime") if "online" in it else None) or it.get("readyTime")
+                or it.get("availableTime"),
+                source_type=src.get("type"),
+                tracks=list(it.get("tracks") or []),
+                bytes_received=int(it.get("bytesReceived") or 0),
+                bytes_sent=int(it.get("bytesSent") or 0),
+                readers=readers,
+            )
+        return paths
+
+    async def poll_once(self) -> None:
+        try:
+            paths = await self.fetch()
+        except Exception as exc:  # any failure to talk to the API = unhealthy
+            self.consecutive_failures += 1
+            self.last_error = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            if self._first_fail_mono is None:
+                self._first_fail_mono = time.monotonic()
+            if self.consecutive_failures >= self.s.health_fail_threshold and self.state != DOWN:
+                await self._mark_down()
+            if self.state == DOWN:
+                await self._maybe_recover()
+                await self._boot_grace_over()
+            return
+        self._boot_down_pending = False
+        now_m = time.monotonic()
+        for name, pinfo in paths.items():
+            prev = self._prev_bytes.get(name)
+            if prev and now_m > prev[0] and pinfo.bytes_received >= prev[1] and pinfo.bytes_sent >= prev[2]:
+                dt = now_m - prev[0]
+                pinfo.ingest_bps = (pinfo.bytes_received - prev[1]) * 8 / dt
+                pinfo.egress_bps = (pinfo.bytes_sent - prev[2]) * 8 / dt
+            elif prev and name in self.paths:  # keep last rate between closely spaced polls
+                pinfo.ingest_bps, pinfo.egress_bps = self.paths[name].ingest_bps, self.paths[name].egress_bps
+            if not prev or now_m - prev[0] >= 1.5:
+                self._prev_bytes[name] = (now_m, pinfo.bytes_received, pinfo.bytes_sent)
+        self._prev_bytes = {k: v for k, v in self._prev_bytes.items() if k in paths}
+        self.paths = paths
+        today = datetime.now().date()
+        for name, pinfo in paths.items():
+            day, peak = self._peaks.get(name, (today, 0))
+            self._peaks[name] = (today, max(peak if day == today else 0, len(pinfo.readers)))
+        self.consecutive_failures = 0
+        self._first_fail_mono = None
+        seen_up_before = self.last_ok_at is not None
+        self.last_ok_at = datetime.now(timezone.utc)
+        self.last_ok_mono = time.monotonic()
+        self.last_error = None
+        self._last_recover_attempt = 0.0  # a new outage may recover immediately
+        if self.state != UP:
+            was_down = self.state == DOWN
+            self.state = UP
+            self.up_event.set()
+            if was_down and seen_up_before:  # not merely "not up yet" during boot
+                outage = None
+                if self.down_since:
+                    outage = (datetime.now(timezone.utc) - self.down_since).total_seconds()
+                self.recoveries += 1
+                self.last_recovery = {"recovered_at": self.last_ok_at.isoformat(), "outage_s": outage}
+                log.warning("MediaMTX is back up (outage %.1fs)", outage or -1)
+            self.down_since = None
+            for cb in self.on_up:
+                await _safe(cb)
+
+    async def _mark_down(self) -> None:
+        self.state = DOWN
+        self.up_event.clear()
+        now = datetime.now(timezone.utc)
+        # Down since the last successful poll (best estimate of the failure time)
+        self.down_since = self.last_ok_at or now
+        self.down_detected_at = now
+        self.last_detection_s = (now - self.down_since).total_seconds()
+        if self.last_ok_at is None:
+            # Backend start: MediaMTX is simply not up yet (in process mode recovery is what
+            # starts it). No outage event/alert unless it is still down after the grace period.
+            self._boot_down_pending = True
+            log.info("MediaMTX not up yet (%s); starting it", self.last_error)
+            return
+        log.error("MediaMTX DOWN (detected after %.1fs): %s", self.last_detection_s, self.last_error)
+        for cb in self.on_down:
+            await _safe(cb)
+
+    async def _boot_grace_over(self) -> None:
+        if self._boot_down_pending and self._first_fail_mono is not None \
+                and time.monotonic() - self._first_fail_mono >= BOOT_GRACE_S:
+            self._boot_down_pending = False
+            log.error("MediaMTX DOWN: not up %.0fs after backend start: %s", BOOT_GRACE_S, self.last_error)
+            for cb in self.on_down:
+                await _safe(cb)
+
+    async def _maybe_recover(self) -> None:
+        if not self.s.mediamtx_auto_recover or self.controller.mode == "external":
+            return
+        now = time.monotonic()
+        if now - self._last_recover_attempt < 5:  # give a (re)start time to come up
+            return
+        self._last_recover_attempt = now
+        try:
+            active = await self.controller.is_active()
+            # Process gone / unit inactive -> start. Present but unresponsive
+            # for a while -> restart (hung process).
+            if active is False or active is None:
+                self.last_control_message = await self.controller.start()
+            elif self._first_fail_mono and now - self._first_fail_mono > 15:
+                self.last_control_message = await self.controller.restart()
+            else:
+                self.last_control_message = "service active; waiting for API (systemd may be restarting it)"
+        except Exception as exc:
+            self.last_control_message = f"recovery failed: {exc}"
+            log.error("MediaMTX recovery failed: %s", exc)
+
+    async def run(self) -> None:
+        while not self._stopping:
+            await self.poll_once()
+            await asyncio.sleep(self.s.health_interval_s)
+
+    def start_monitor(self) -> None:
+        self._task = asyncio.create_task(self.run(), name="mediamtx-monitor")
+
+    async def stop(self) -> None:
+        self._stopping = True
+        if self._task:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._task
+        await self.controller.shutdown()
+        await self.client.aclose()
+
+    async def wait_up(self, timeout: float) -> bool:
+        try:
+            await asyncio.wait_for(self.up_event.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    # ------------------------------------------------------------ queries
+    def path(self, name: str) -> PathInfo | None:
+        return self.paths.get(name)
+
+    async def rtsp_readers(self, max_age_s: float = 0.2) -> dict[str, list[dict]]:
+        """Path -> RTSP(S) sessions reading it, fresh from MediaMTX (shared by callers
+        for ``max_age_s``). Used while a stream holds for its first viewer: the 2 s
+        path poll can miss a reader that only probes the URL for a moment."""
+        async with self._sess_lock:
+            at, cached = self._sess_cache
+            if time.monotonic() - at <= max_age_s:
+                return cached
+            out: dict[str, list[dict]] = {}
+            for kind in ("rtspsessions", "rtspssessions"):  # RTSPS when TLS is on
+                with contextlib.suppress(Exception):
+                    r = await self.client.get(f"/v3/{kind}/list", params={"itemsPerPage": 10000})
+                    if r.status_code != 200:
+                        continue
+                    for x in r.json().get("items", []):
+                        if x.get("state") == "read" and x.get("path"):
+                            out.setdefault(x["path"], []).append({
+                                "type": "rtspsSession" if kind == "rtspssessions" else "rtspSession",
+                                "id": x.get("id"), "remote_addr": x.get("remoteAddr"),
+                                "hostname": self.hostnames.get(addr_ip(x.get("remoteAddr"))),
+                            })
+            self._sess_cache = (time.monotonic(), out)
+            return out
+
+    def peak_today(self, name: str) -> int:
+        day, peak = self._peaks.get(name, (None, 0))
+        return peak if day == datetime.now().date() else 0
+
+    def note_preview(self, name: str, client: str) -> None:
+        """Record that a dashboard preview (HLS through the backend) fetched this path."""
+        self._preview_seen.setdefault(name, {})[client] = time.monotonic()
+
+    def preview_watchers(self, name: str) -> int:
+        seen = self._preview_seen.get(name)
+        if not seen:
+            return 0
+        cutoff = time.monotonic() - PREVIEW_ACTIVE_S
+        for k in [k for k, v in seen.items() if v < cutoff]:
+            del seen[k]
+        return len(seen)
+
+    def total_bps(self, names: set[str] | None = None) -> tuple[float, float]:
+        ps = [p for n, p in self.paths.items() if names is None or n in names]
+        return (sum(p.ingest_bps or 0 for p in ps), sum(p.egress_bps or 0 for p in ps))
+
+    def total_readers(self, names: set[str] | None = None) -> int:
+        return sum(len(p.readers) for n, p in self.paths.items() if names is None or n in names)
+
+    def status(self) -> dict:
+        return {
+            "state": self.state,
+            "api_url": self.s.mediamtx_api_url,
+            "control_mode": self.controller.mode,
+            "auto_recover": self.s.mediamtx_auto_recover,
+            "consecutive_failures": self.consecutive_failures,
+            "last_ok_at": self.last_ok_at.isoformat() if self.last_ok_at else None,
+            "down_since": self.down_since.isoformat() if self.down_since else None,
+            "down_detected_at": self.down_detected_at.isoformat() if self.down_detected_at else None,
+            "last_detection_s": self.last_detection_s,
+            "last_error": self.last_error,
+            "recoveries": self.recoveries,
+            "last_recovery": self.last_recovery,
+            "last_control_message": self.last_control_message,
+            "managed_pid": self.controller.pid,
+            "path_count": len(self.paths),
+            "ready_paths": sum(1 for p in self.paths.values() if p.ready),
+            "total_readers": self.total_readers(),
+        }
+
+
+async def _safe(cb: Callback) -> None:
+    try:
+        await cb()
+    except Exception:  # pragma: no cover - logged, never fatal
+        log.exception("MediaMTX callback failed")

@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (RGB triplets). Light is default; .dark overrides. */
+:root {
+  --bg: 243 245 249; --surface: 255 255 255; --surface-2: 247 248 251; --line: 226 231 239;
+  --fg: 15 23 42; --muted: 71 85 105; --subtle: 140 152 172;
+  --brand: 37 99 235; --brand-strong: 29 78 216; --brand-soft: 219 234 254; --brand-fg: 255 255 255;
+  color-scheme: light;
+}
+.dark {
+  --bg: 9 13 22; --surface: 17 23 36; --surface-2: 23 31 47; --line: 38 49 69;
+  --fg: 228 233 241; --muted: 156 167 186; --subtle: 103 117 140;
+  --brand: 96 165 250; --brand-strong: 59 130 246; --brand-soft: 23 37 84; --brand-fg: 255 255 255;
+  color-scheme: dark;
+}
+
+@layer base {
+  body { @apply bg-bg text-fg antialiased; }
+  ::selection { @apply bg-brand/30; }
+  :focus-visible { @apply outline-none ring-2 ring-brand ring-offset-2 ring-offset-bg; }
+}
+
+@layer components {
+  .btn { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn border-transparent bg-brand-strong text-brand-fg shadow-sm hover:bg-brand-strong/90; }
+  .btn-secondary { @apply btn border-line bg-surface text-fg shadow-sm hover:bg-surface-2; }
+  .btn-ghost { @apply btn border-transparent bg-transparent text-muted hover:bg-surface-2 hover:text-fg; }
+  .btn-danger { @apply btn border-transparent bg-red-600 text-white shadow-sm hover:bg-red-700; }
+  .btn-xs { @apply rounded-md px-2 py-0.5 text-xs; }
+  .input { @apply w-full rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-fg shadow-sm placeholder:text-subtle focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30; }
+  .input-error { @apply border-red-500 focus:border-red-500 focus:ring-red-500/30; }
+  .label { @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-muted; }
+  .card { @apply rounded-xl border border-line bg-surface shadow-card; }
+  .th { @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted; }
+  .td { @apply px-3 py-2 align-top text-sm; }
+  .kbd { @apply rounded border border-line bg-surface-2 px-1 font-mono text-[10px] text-muted; }
+  .skeleton { @apply relative overflow-hidden rounded-md bg-surface-2; }
+  /* touch screens: buttons and fields at least ~40 px tall, easier to hit */
+  @media (pointer: coarse) {
+    .btn { min-height: 2.5rem; }
+    .btn-xs { min-height: 2.25rem; min-width: 2.25rem; }
+    .input { min-height: 2.5rem; }
+  }
+  .skeleton::after { content: ""; @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/5; animation: shimmer 1.4s infinite; }
+}

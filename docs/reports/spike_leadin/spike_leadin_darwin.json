@@ -1,0 +1,286 @@
+{
+ "meta": {
+  "platform": "Darwin 25.6.0 arm64",
+  "ffmpeg": "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers",
+  "mediamtx": "v1.21.2",
+  "gstreamer": false,
+  "drawtext": false,
+  "date": "2026-11-09 13:10"
+ },
+ "results": [
+  {
+   "test": "T1 reader stays connected",
+   "case": "h264_1080p25_gop2",
+   "verdict": "PASS",
+   "reader_sessions_created": 1,
+   "readers": 1
+  },
+  {
+   "test": "T2 clean switch",
+   "case": "h264_1080p25_gop2",
+   "verdict": "PASS",
+   "pause_at_switch_ms": [
+    160
+   ],
+   "slate_style": "band+counter",
+   "segments": [
+    "Sx102",
+    "Vx422(from src frame 100)"
+   ],
+   "skipped": 0,
+   "repeated": 0,
+   "ts_not_increasing": 0,
+   "gaps": [
+    4.0
+   ],
+   "unknown": 0,
+   "decode_errors": []
+  },
+  {
+   "test": "T3 starts at the configured frame",
+   "case": "h264_1080p25_gop2",
+   "verdict": "PASS",
+   "start_keyframe_s": 4.0,
+   "first_video_src_frame": 100
+  },
+  {
+   "test": "T1/T2 GStreamer reader",
+   "case": "h264_1080p25_gop2",
+   "verdict": "NOT RUN",
+   "reason": "GStreamer RTSP plugins not installed here"
+  },
+  {
+   "test": "T1 reader stays connected",
+   "case": "h264_720p2997_bframes",
+   "verdict": "PASS",
+   "reader_sessions_created": 1,
+   "readers": 1
+  },
+  {
+   "test": "T2 clean switch",
+   "case": "h264_720p2997_bframes",
+   "verdict": "PASS",
+   "pause_at_switch_ms": [
+    133
+   ],
+   "slate_style": "band+counter",
+   "segments": [
+    "Sx122",
+    "Vx507(from src frame 120)"
+   ],
+   "skipped": 0,
+   "repeated": 0,
+   "ts_not_increasing": 0,
+   "gaps": [
+    4.0
+   ],
+   "unknown": 0,
+   "decode_errors": []
+  },
+  {
+   "test": "T3 starts at the configured frame",
+   "case": "h264_720p2997_bframes",
+   "verdict": "PASS",
+   "start_keyframe_s": 4.004,
+   "first_video_src_frame": 120
+  },
+  {
+   "test": "T1/T2 GStreamer reader",
+   "case": "h264_720p2997_bframes",
+   "verdict": "NOT RUN",
+   "reason": "GStreamer RTSP plugins not installed here"
+  },
+  {
+   "test": "T1 reader stays connected",
+   "case": "h264_1080p25_gop10",
+   "verdict": "PASS",
+   "reader_sessions_created": 1,
+   "readers": 1
+  },
+  {
+   "test": "T2 clean switch",
+   "case": "h264_1080p25_gop10",
+   "verdict": "PASS",
+   "pause_at_switch_ms": [
+    160
+   ],
+   "slate_style": "band+counter",
+   "segments": [
+    "Sx102",
+    "Vx422(from src frame 250)"
+   ],
+   "skipped": 0,
+   "repeated": 0,
+   "ts_not_increasing": 0,
+   "gaps": [
+    4.0
+   ],
+   "unknown": 0,
+   "decode_errors": []
+  },
+  {
+   "test": "T3 starts at the configured frame",
+   "case": "h264_1080p25_gop10",
+   "verdict": "PASS",
+   "start_keyframe_s": 10.0,
+   "first_video_src_frame": 250
+  },
+  {
+   "test": "T1/T2 GStreamer reader",
+   "case": "h264_1080p25_gop10",
+   "verdict": "NOT RUN",
+   "reason": "GStreamer RTSP plugins not installed here"
+  },
+  {
+   "test": "T1 reader stays connected",
+   "case": "hevc_1080p25",
+   "verdict": "PASS",
+   "reader_sessions_created": 1,
+   "readers": 1
+  },
+  {
+   "test": "T2 clean switch",
+   "case": "hevc_1080p25",
+   "verdict": "PASS",
+   "pause_at_switch_ms": [
+    160
+   ],
+   "slate_style": "band+counter",
+   "segments": [
+    "Sx118",
+    "Vx406(from src frame None)"
+   ],
+   "skipped": 0,
+   "repeated": 0,
+   "ts_not_increasing": 0,
+   "gaps": [
+    4.0
+   ],
+   "unknown": 0,
+   "decode_errors": []
+  },
+  {
+   "test": "T3 starts at the configured frame",
+   "case": "hevc_1080p25 (transcoded)",
+   "verdict": "NOT RUN",
+   "reason": "re-encoded frames can't be matched to the source by checksum"
+  },
+  {
+   "test": "T1/T2 GStreamer reader",
+   "case": "hevc_1080p25",
+   "verdict": "NOT RUN",
+   "reason": "GStreamer RTSP plugins not installed here"
+  },
+  {
+   "test": "T1 reader stays connected",
+   "case": "h264_1080p25_gop2 + slate 1280x720",
+   "verdict": "PASS",
+   "reader_sessions_created": 1,
+   "readers": 1
+  },
+  {
+   "test": "T2 clean switch",
+   "case": "h264_1080p25_gop2 + slate 1280x720",
+   "verdict": "INFO",
+   "pause_at_switch_ms": [
+    160
+   ],
+   "slate_style": "band+counter",
+   "segments": [
+    "Sx102",
+    "?x422"
+   ],
+   "skipped": 0,
+   "repeated": 0,
+   "ts_not_increasing": 0,
+   "gaps": [
+    4.0
+   ],
+   "unknown": 422,
+   "decode_errors": []
+  },
+  {
+   "test": "T3 starts at the configured frame",
+   "case": "h264_1080p25_gop2 + slate 1280x720",
+   "verdict": "INFO",
+   "start_keyframe_s": 4.0,
+   "first_video_src_frame": null
+  },
+  {
+   "test": "T1/T2 GStreamer reader",
+   "case": "h264_1080p25_gop2 + slate 1280x720",
+   "verdict": "NOT RUN",
+   "reason": "GStreamer RTSP plugins not installed here"
+  },
+  {
+   "test": "T4 hold until viewer",
+   "case": "h264_1080p25_gop2",
+   "verdict": "PASS",
+   "reader_detected_after_s": 0.26,
+   "video_online_after_detect_s": 5.09,
+   "lead_in_s": 5.0,
+   "publisher_before_viewer": false,
+   "slate_frames_decoded_by_reader": 109,
+   "segments": [
+    "Sx109",
+    "Vx267(from src frame 100)"
+   ]
+  },
+  {
+   "test": "T5 lead-in frames unique per camera",
+   "case": "slate style band+counter",
+   "verdict": "PASS",
+   "frames_a": 140,
+   "frames_b": 127,
+   "identical_frames_across_cameras": 0,
+   "consecutive_identical_frames_in_one_slate": 0
+  },
+  {
+   "test": "T6 publisher crash keeps the reader",
+   "case": "h264_1080p25_gop2",
+   "verdict": "PASS",
+   "segments": [
+    "Sx27",
+    "Vx213(from src frame 100)",
+    "Sx127",
+    "Vx251(from src frame 100)"
+   ],
+   "pauses_ms": [
+    160,
+    80,
+    120,
+    160
+   ],
+   "reader_sessions_created": 1,
+   "ts_not_increasing": 0,
+   "decode_errors": []
+  },
+  {
+   "test": "T7 MediaMTX restart",
+   "case": "re-add path config on MediaMTX up",
+   "verdict": "PASS",
+   "config_lost_on_restart": true,
+   "frames_after_readd": 77
+  },
+  {
+   "test": "T8 cost of waiting streams",
+   "case": "20 streams, 1080p25 slate",
+   "verdict": "PASS",
+   "mediamtx_cpu_pct_and_rss_mb": {
+    "no_paths": [
+     0.8,
+     25.1
+    ],
+    "20_paths_no_readers": [
+     6.9,
+     45.3
+    ],
+    "20_paths_20_readers": [
+     9.9,
+     47.4
+    ]
+   },
+   "cpu_count": 8
+  }
+ ]
+}

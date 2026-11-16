@@ -1,0 +1,39 @@
+# /etc/systemd/system/mediamtx.service
+# MediaMTX RTSP server for RIG-02. Starts first on boot; the stream manager
+# (rtsp-manager.service) is ordered after it.
+[Unit]
+Description=MediaMTX RTSP server (RIG-02 test rig)
+Documentation=https://github.com/bluenviron/mediamtx
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=mediamtx
+Group=mediamtx
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+# systemd restarts a crashed MediaMTX within 1 s. The stream manager also
+# detects the outage (<10 s) and republishes every stream afterwards.
+Restart=always
+RestartSec=1
+TimeoutStopSec=10
+LimitNOFILE=65536
+
+# Hardening: MediaMTX only needs to read its config and open sockets.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

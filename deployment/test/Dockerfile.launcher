@@ -1,0 +1,10 @@
+# A clean machine with only Python and FFmpeg: everything else must come from app.py.
+FROM debian:12
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+      python3 python3-venv ffmpeg curl ca-certificates procps >/dev/null && rm -rf /var/lib/apt/lists/*
+RUN useradd -m tester
+COPY --chown=tester . /home/tester/rig02
+USER tester
+WORKDIR /home/tester/rig02
+CMD ["sleep", "infinity"]
