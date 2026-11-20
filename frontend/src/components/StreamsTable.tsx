@@ -446,8 +446,11 @@ interface CardCtx {
 }
 
 /** "Up 3m 34s" for a running stream, "last ran 7h ago" for a stopped one. */
+/** "20m 15s" -> "20m": cards show minutes, so they don't change every time the list redraws. */
+const coarse = (t: string) => (/\d+m \d+s$/.test(t) ? t.replace(/ \d+s$/, "") : t);
+
 function upText(s: Stream, now: number): string | null {
-  if (s.status === "RUNNING") return `up ${since(s.running_since, now)}`;
+  if (s.status === "RUNNING") return `up ${coarse(since(s.running_since, now))}`;
   if (!isLive(s) && (s.last_stop_at || s.last_start_at)) return `last ran ${since(s.last_stop_at ?? s.last_start_at, now)} ago`;
   return null;
 }

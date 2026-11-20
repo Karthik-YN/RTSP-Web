@@ -75,3 +75,26 @@ describe("connection problems are never silent", () => {
     vi.useRealTimers();
   });
 });
+
+describe("MediaMTX status counters", () => {
+  it("do not redraw readers of the status while only byte counters move", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let n = 1;
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
+      const path = String(url).split("?")[0];
+      const body = path === "/api/mediamtx/status" || path === "/api/mediamtx"
+        ? { state: "UP", last_ok_at: new Date().toISOString(), paths: [{ name: "a", bytes_received: (n += 1000) }] }
+        : path === "/api/streams" ? [] : [];
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    let renders = 0;
+    function Mtx() { renders++; const { mediamtx } = useRig(); return <span data-testid="mtx">{mediamtx?.state ?? "-"}</span>; }
+    render(<RigDataProvider user={admin} config={config}><Mtx /></RigDataProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5200); });
+    expect(screen.getByTestId("mtx")).toHaveTextContent("UP");
+    const base = renders;
+    await act(async () => { await vi.advanceTimersByTimeAsync(15500); });
+    expect(renders).toBe(base);
+    vi.useRealTimers();
+  });
+});

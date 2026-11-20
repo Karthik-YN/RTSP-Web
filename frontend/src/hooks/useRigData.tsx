@@ -28,7 +28,8 @@ type Key = keyof RigData;
 
 /** Runtime fields that change on every poll while a stream runs; left out when deciding "did the list change". */
 const VOLATILE = new Set(["progress", "ingest_bps", "egress_bps", "bytes_received", "bytes_sent", "process",
-  "playback_position_s", "loop_count", "loop_period_s", "viewer_peak_today", "suppressed_timestamp_warnings"]);
+  "playback_position_s", "loop_count", "loop_period_s", "viewer_peak_today", "suppressed_timestamp_warnings",
+  "last_ok_at"]);
 export function streamsShape(list: Stream[] | null): string {
   return JSON.stringify(list, (k, v) => (VOLATILE.has(k) ? undefined : v));
 }
@@ -67,6 +68,10 @@ export function RigDataProvider({ user, config, children }: { user: User; config
   const stable = useRef<{ shape: string; list: Stream[] | null }>({ shape: "", list: null });
   const shape = streamsShape(streams.data);
   if (shape !== stable.current.shape) stable.current = { shape, list: streams.data };
+  // same for the MediaMTX status: its byte counters and "last OK" time change on every poll
+  const stableMtx = useRef<{ shape: string; value: MediaMTXStatus | null }>({ shape: "", value: null });
+  const mtxShape = JSON.stringify(mediamtx.data, (k, v) => (VOLATILE.has(k) ? undefined : v));
+  if (mtxShape !== stableMtx.current.shape) stableMtx.current = { shape: mtxShape, value: mediamtx.data };
 
   const refreshers = useRef({ streams: streams.refresh, system: system.refresh, mediamtx: mediamtx.refresh,
     videos: videos.refresh, analytics: analytics.refresh });
@@ -89,7 +94,7 @@ export function RigDataProvider({ user, config, children }: { user: User; config
   const prevErr = store.state.appError;
   const next: RigData = {
     user, config,
-    streams: stable.current.list, liveStreams: streams.data, system: system.data, mediamtx: mediamtx.data,
+    streams: stable.current.list, liveStreams: streams.data, system: system.data, mediamtx: stableMtx.current.value,
     videos: videos.data, analytics: analytics.data,
     streamsLoading: streams.loading, videosLoading: videos.loading,
     appError: err && prevErr && prevErr.message === err.message ? prevErr : err,

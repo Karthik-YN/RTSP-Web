@@ -103,11 +103,13 @@ describe("CreateStreamDialog", () => {
     const user = userEvent.setup();
     const withClock = { ...config, features: ["clock_overlay"] } as typeof config;
     render(<ToastProvider><CreateStreamDialog videos={[video]} streams={[]} config={withClock} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
-    const box = screen.getByRole("checkbox", { name: /Server clock in picture/ });
-    expect(box).not.toBeChecked();
-    expect(screen.queryByRole("radiogroup", { name: "Clock time zone" })).toBeNull();
-    await user.click(box);
+    // both choices are visible at once: clock yes/no, and the time standard (greyed out while "No")
+    const yes = screen.getByRole("radio", { name: /Yes: Server clock in picture/ });
+    expect(screen.getByRole("radio", { name: /No: send the video as it is/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /IST/ })).toBeDisabled();
+    await user.click(yes);
     expect(screen.getByRole("radio", { name: /IST/ })).toBeChecked(); // IST unless UTC is picked
+    expect(screen.getByRole("radio", { name: "UTC" })).toBeEnabled();
     await user.click(screen.getByRole("radio", { name: "UTC" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /Create/ })).toBeEnabled(), { timeout: 3000 });
     await user.click(screen.getByRole("button", { name: /Create/ }));

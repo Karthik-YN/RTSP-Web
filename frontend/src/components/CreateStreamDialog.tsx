@@ -67,29 +67,37 @@ export function ClockField({ config, value, tz, onChange, idPrefix }: {
   if (!config?.features?.includes("clock_overlay")) return null; // older server
   const cap = system?.streams;
   return (
-    <div className="rounded-lg bg-surface-2 p-3 ring-1 ring-inset ring-line" data-testid="clock-field">
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" className="mt-0.5" checked={value} onChange={(e) => onChange(e.target.checked, tz)}
-          aria-describedby={`${idPrefix}-clock-help`} />
-        <span><b>Server clock in picture</b> — the rig's time with milliseconds, burned into every frame (top right)</span>
-      </label>
-      {value && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pl-6 text-sm" role="radiogroup" aria-label="Clock time zone">
+    <fieldset className="rounded-lg bg-surface-2 p-3 ring-1 ring-inset ring-line" data-testid="clock-field">
+      <legend className="label mb-1 px-1">Time on the video</legend>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div role="radiogroup" aria-label="Server time as text on the frames">
+          <div className="mb-1 text-xs font-medium text-muted">Show the server time as text on every frame?</div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="radio" name={`${idPrefix}-clock-on`} checked={!value} onChange={() => onChange(false, tz)} />
+            No: send the video as it is
+          </label>
+          <label className="mt-1 flex items-center gap-2 text-sm">
+            <input type="radio" name={`${idPrefix}-clock-on`} checked={value} onChange={() => onChange(true, tz)} />
+            Yes: <b>Server clock in picture</b> (date, time, ms; top right)
+          </label>
+        </div>
+        <div role="radiogroup" aria-label="Clock time zone" aria-disabled={!value}>
+          <div className={`mb-1 text-xs font-medium ${value ? "text-muted" : "text-subtle"}`}>Time standard</div>
           {(["IST", "UTC"] as const).map((z) => (
-            <label key={z} className="flex items-center gap-1.5">
-              <input type="radio" name={`${idPrefix}-clock-tz`} checked={tz === z} onChange={() => onChange(true, z)} />
+            <label key={z} className={`flex items-center gap-2 text-sm ${value ? "" : "text-subtle"} ${z === "UTC" ? "mt-1" : ""}`}>
+              <input type="radio" name={`${idPrefix}-clock-tz`} checked={tz === z} disabled={!value} onChange={() => onChange(true, z)} />
               {z === "IST" ? "IST (India, UTC+5:30)" : "UTC"}
             </label>
           ))}
         </div>
-      )}
-      <p id={`${idPrefix}-clock-help`} className="mt-1 pl-6 text-xs text-muted">
+      </div>
+      <p id={`${idPrefix}-clock-help`} className="mt-2 text-xs text-muted">
         {value
           ? <>Re-encodes this stream live: about 1–2 CPU cores at 720p, 4 at 1080p. It counts toward the transcode limit
-            {cap ? <> ({cap.transcoding} of {cap.max_transcode} in use)</> : null}. Use it only on streams that need it.</>
-          : "Off: the video is sent as it is (no CPU). Turn on for latency tests or to line up events with frames."}
+            {cap ? <> ({cap.transcoding} of {cap.max_transcode} in use)</> : null}.</>
+          : "No clock: no CPU cost. Choose Yes for latency tests or to line up events with frames."}
       </p>
-    </div>
+    </fieldset>
   );
 }
 
