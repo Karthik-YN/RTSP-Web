@@ -33,12 +33,12 @@ def test_describe_agent(ua, name):
 
 
 def test_upload_records_who_when_where(rig_factory, fixtures_dir):
-    data = (fixtures_dir / "h264_2997.mp4").read_bytes()
+    data = (fixtures_dir / "h264_2997.mp4").read_bytes() + b"unique-upload"  # not a copy of the fixture (duplicates are refused)
     with rig_factory([], mediamtx=False) as rig:
         c = rig.client
         before = datetime.now(timezone.utc) - timedelta(seconds=5)
         # X-Forwarded-For from a non-loopback peer is ignored (can't fake the address)
-        r = c.post("/api/videos/upload?filename=one.mp4", content=data,
+        r = c.post("/api/videos/upload?filename=one.mp4", content=data + b'#1',
                    headers={"user-agent": CHROME_WIN, "x-forwarded-for": "6.6.6.6"})
         assert r.status_code == 201, r.text
         v = r.json()
@@ -47,9 +47,9 @@ def test_upload_records_who_when_where(rig_factory, fixtures_dir):
         assert before <= datetime.fromisoformat(v["uploaded_at"]) <= datetime.now(timezone.utc)
 
         # resumable upload keeps the origin of the session start
-        s = c.post("/api/videos/uploads", json={"filename": "two.mp4", "size": len(data)},
+        s = c.post("/api/videos/uploads", json={"filename": "two.mp4", "size": len(data + b'#2')},
                    headers={"user-agent": "curl/8.5.0"}).json()
-        r = c.put(f"/api/videos/uploads/{s['id']}?offset=0", content=data,
+        r = c.put(f"/api/videos/uploads/{s['id']}?offset=0", content=data + b'#2',
                   headers={"content-type": "application/octet-stream"})
         assert r.status_code == 201, r.text
         assert r.json()["uploaded_device"] == "curl" and r.json()["uploaded_by"] == "anonymous"
@@ -66,20 +66,20 @@ def test_upload_records_who_when_where(rig_factory, fixtures_dir):
 
 
 def test_with_login_the_signed_in_user_is_the_uploader(rig_factory, fixtures_dir):
-    data = (fixtures_dir / "h264_2997.mp4").read_bytes()
+    data = (fixtures_dir / "h264_2997.mp4").read_bytes() + b"unique-upload"  # not a copy of the fixture (duplicates are refused)
     rig = rig_factory([], mediamtx=False, auth=True)
     us = UserStore(rig.settings.users_path)
     us.set_user("alice", "operator", "alice-password")
     us.set_user("victor", "viewer", "victor-password")
     with rig:
         c = rig.client
-        r = c.post("/api/videos/upload?filename=a.mp4", content=data, auth=("alice", "alice-password"))
+        r = c.post("/api/videos/upload?filename=a.mp4", content=data + b'#3', auth=("alice", "alice-password"))
         assert r.status_code == 201, r.text
         assert r.json()["uploaded_by"] == "alice"
         # viewers can't upload, and nobody can without signing in
-        assert c.post("/api/videos/upload?filename=b.mp4", content=data,
+        assert c.post("/api/videos/upload?filename=b.mp4", content=data + b'#4',
                       auth=("victor", "victor-password")).status_code == 403
-        assert c.post("/api/videos/upload?filename=b.mp4", content=data).status_code == 401
+        assert c.post("/api/videos/upload?filename=b.mp4", content=data + b'#5').status_code == 401
         assert c.post("/api/videos/uploads", json={"filename": "b.mp4", "size": len(data)},
                       auth=("victor", "victor-password")).status_code == 403
         # but viewers do see who uploaded what
@@ -99,7 +99,7 @@ def test_uploader_label(uploaded_by, admins, shown):
 
 
 def test_admin_uploads_show_as_admin_others_by_name(rig_factory, fixtures_dir):
-    data = (fixtures_dir / "h264_2997.mp4").read_bytes()
+    data = (fixtures_dir / "h264_2997.mp4").read_bytes() + b"unique-upload"  # not a copy of the fixture (duplicates are refused)
     rig = rig_factory([], mediamtx=False, auth=True)
     us = UserStore(rig.settings.users_path)
     us.set_user("boss", "admin", "boss-password")
@@ -107,10 +107,10 @@ def test_admin_uploads_show_as_admin_others_by_name(rig_factory, fixtures_dir):
     us.set_user("victor", "viewer", "victor-password")
     with rig:
         c = rig.client
-        r = c.post("/api/videos/upload?filename=by-admin.mp4", content=data, auth=("boss", "boss-password"))
+        r = c.post("/api/videos/upload?filename=by-admin.mp4", content=data + b'#6', auth=("boss", "boss-password"))
         assert r.status_code == 201, r.text
         assert r.json()["uploader"] == "admin" and r.json()["uploaded_by"] == "boss"  # the record keeps the account
-        r = c.post("/api/videos/upload?filename=by-alice.mp4", content=data, auth=("alice", "alice-password"))
+        r = c.post("/api/videos/upload?filename=by-alice.mp4", content=data + b'#7', auth=("alice", "alice-password"))
         assert r.json()["uploader"] == "alice"
         (rig.video_dir / "copied.mp4").write_bytes(data)
         old = time.time() - 3600
@@ -127,7 +127,7 @@ def test_admin_uploads_show_as_admin_others_by_name(rig_factory, fixtures_dir):
 
 
 def test_login_off_uploads_show_as_admin(rig_factory, fixtures_dir):
-    data = (fixtures_dir / "h264_2997.mp4").read_bytes()
+    data = (fixtures_dir / "h264_2997.mp4").read_bytes() + b"unique-upload"  # not a copy of the fixture (duplicates are refused)
     with rig_factory([], mediamtx=False) as rig:
-        r = rig.client.post("/api/videos/upload?filename=x.mp4", content=data)
+        r = rig.client.post("/api/videos/upload?filename=x.mp4", content=data + b'#8')
         assert r.json()["uploaded_by"] == "anonymous" and r.json()["uploader"] == "admin"

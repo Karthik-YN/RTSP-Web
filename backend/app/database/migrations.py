@@ -231,6 +231,17 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE videos ADD COLUMN uploaded_agent TEXT;
         """,
     ),
+    (
+        8,
+        # Video naming convention (WHAT_WHERE_NN): each analytics' WHAT code, the name a file was
+        # uploaded with, and earlier names (renames keep search working on old names).
+        """
+        ALTER TABLE analytics ADD COLUMN code TEXT;
+        CREATE UNIQUE INDEX ux_analytics_code ON analytics(code) WHERE code IS NOT NULL;
+        ALTER TABLE videos ADD COLUMN original_name TEXT;
+        ALTER TABLE videos ADD COLUMN previous_names TEXT;
+        """,
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

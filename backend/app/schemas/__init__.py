@@ -66,6 +66,8 @@ class VideoOut(BaseModel):
     audio_codec: str | None
     bitrate_bps: int | None
     keyframe_interval_s: float | None
+    b_frames: bool | None = None  # B-frames in the video (real cameras have none)
+    quick_hash: str | None = None  # content fingerprint (duplicate detection by content)
     compat_mode: str | None
     compat_reasons: list[str]
     compat_warnings: list[str]
@@ -90,6 +92,10 @@ class VideoOut(BaseModel):
     uploaded_from: str | None = None  # client IP
     uploaded_device: str | None = None  # e.g. "Windows · Chrome"
     analytics: list[dict] = []  # analytics this video is in: {id, name, slot_id}
+    # naming convention (services/naming.py): parts of a conforming name, else None
+    name_parts: dict | None = None
+    original_name: str | None = None
+    previous_names: list[str] = []
 
 
 class ScanOut(BaseModel):
@@ -105,6 +111,10 @@ class ScanOut(BaseModel):
 class UploadCheckIn(BaseModel):
     filename: str = Field(min_length=1, max_length=512)
     size: int = Field(gt=0)
+    # the name the file had on the uploader's computer, when the dialog renamed it to the convention
+    original_name: str | None = Field(default=None, max_length=512)
+    # content fingerprint (SHA-256 of size + first/last MiB, as the library stores it): finds duplicates by content
+    quick_hash: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
 
 
 class UploadCheckOut(BaseModel):
@@ -116,6 +126,7 @@ class UploadCheckOut(BaseModel):
     reserve: int
     in_flight_uploads: int
     available: int
+    duplicate_of: dict | None = None  # {"id", "rel_path"}: the same video (same content) is already in the library
 
 
 TimeValue = str | float | None
@@ -131,6 +142,9 @@ class StreamCreate(BaseModel):
     output_size: str | None = Field(default=None, max_length=20,
                                     description="standard (RTSPM_OUTPUT_WIDTH x HEIGHT), original, or WxH from "
                                                 "RTSPM_STANDARD_SIZES (default: RTSPM_OUTPUT_DEFAULT)")
+    # explicit choice when creating a stream: draw the server clock on every frame (re-encodes the stream)
+    clock: bool = False
+    clock_tz: Literal["IST", "UTC"] = "IST"
     start_now: bool = True
     note: str | None = Field(default=None, max_length=500)
     protected: bool = False
@@ -152,6 +166,8 @@ class StreamUpdate(BaseModel):
     mode: Literal["loop", "once"] | None = None
     force_transcode: bool | None = None
     output_size: str | None = Field(default=None, max_length=20)
+    clock: bool | None = None
+    clock_tz: Literal["IST", "UTC"] | None = None
     note: str | None = Field(default=None, max_length=500)
     protected: bool | None = None
     owner: str | None = Field(default=None, max_length=64)
@@ -189,6 +205,8 @@ class StreamOut(BaseModel):
     force_transcode: bool
     output_mode: str | None
     output_size: str = "original"
+    clock: bool = False  # server clock drawn on every frame
+    clock_tz: str = "IST"
     output_resolution: str | None = None  # what readers get, e.g. 1280x720
     desired_state: str
     status: str

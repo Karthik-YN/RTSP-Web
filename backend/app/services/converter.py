@@ -38,7 +38,7 @@ from sqlalchemy import select
 
 from ..database import utcnow
 from ..models import Video, VideoStatus
-from . import compatibility
+from . import compatibility, naming
 from .ffprobe_service import ProbeError, probe
 from .file_manager import LibraryError
 from .shape import SHAPE_LABEL, fit_filter, video_shape
@@ -56,10 +56,16 @@ PROFILE_SUFFIX = {"h264": SUFFIX, "720p": " (720p)", "16x9": " (720p 16x9)"}
 PROFILE_LABEL = {"h264": "H.264 copy", "720p": "720p copy", "16x9": "16:9 copy"}
 
 
+# Copies of files named by the convention (WHAT_WHERE_NN) get tags instead: ALPR_toll-s1_01_720p.mp4
+PROFILE_TAGS = {"h264": "_h264", "720p": "_720p", "16x9": "_720p_16x9"}
+
+
 def is_copy(rel_path: str) -> bool:
     """A file this converter made (any profile)."""
     stem = PurePosixPath(rel_path).stem
-    return any(stem.endswith(sfx) for sfx in PROFILE_SUFFIX.values())
+    if any(stem.endswith(sfx) for sfx in PROFILE_SUFFIX.values()):
+        return True
+    return naming.parse(PurePosixPath(rel_path).name) is not None and stem.endswith(tuple(PROFILE_TAGS.values()))
 
 
 def browser_playback(v: Video) -> tuple[bool, str | None]:
@@ -91,11 +97,19 @@ def convert_reasons(v: Video) -> list[str]:
         out.append("Streaming it needs live transcoding (a CPU core per stream).")
     if v.keyframe_interval_s and v.keyframe_interval_s > LONG_GOP_S:
         out.append(f"Keyframes only every {v.keyframe_interval_s:.1f} s: viewers wait for the first picture.")
+    if compatibility.b_frames(getattr(v, "probe_json", None)):
+        out.append("Has B-frames (real cameras don't): some edges show frames out of order.")
     return out
 
 
 def target_rel(rel_path: str, profile: str = "h264") -> str:
     p = PurePosixPath(rel_path)
+    parsed = naming.parse(p.name)
+    if parsed is not None:
+        # keep tags the copy no longer has out: a 720p copy of x_4k is x_720p, of x_h264 is x_720p
+        drop = {"h264", "720p", "1080p", "4k", "16x9"}
+        tags = [t for t in parsed.tags if t not in drop] + PROFILE_TAGS[profile].strip("_").split("_")
+        return str(p.with_name(naming.build(parsed.what, parsed.where, parsed.nn, tags, ".mp4")))
     return str(p.with_name(f"{p.stem}{PROFILE_SUFFIX[profile]}.mp4"))
 
 
@@ -237,6 +251,7 @@ class Converter:
                "-i", str(src), "-map", "0:v:0", "-sn", "-dn", "-an",
                "-c:v", "libx264", "-preset", self.s.convert_preset, "-crf", str(self.s.convert_crf),
                "-profile:v", "high", "-pix_fmt", "yuv420p",
+               "-bf", "0",  # camera-style: no B-frames (edges decode in order, no reordering delay)
                "-vf", self.video_filter(profile, fit),
                "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
                "-force_key_frames", f"expr:gte(t,n_forced*{self.s.x264_gop_seconds:g})",

@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from starlette.requests import ClientDisconnect
 
 from ..models import Analytics, AnalyticsSlot, Stream, Video
@@ -15,7 +15,9 @@ from ..schemas import ScanOut, UploadCheckIn, UploadCheckOut, VideoOut
 from ..services.auth import User
 from pydantic import BaseModel
 
-from ..services.converter import browser_playback, convert_reasons, target_rel
+from ..services import naming
+from ..services import compatibility
+from ..services.converter import browser_playback, convert_reasons, is_copy, target_rel
 from ..services.agent import describe_agent
 from ..services.auth import client_ip, uploader_label
 from ..services.shape import video_shape
@@ -27,10 +29,9 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
 def _copies_720p(s) -> dict[str, int]:
-    """rel_path -> id of every ready "(720p)" and "(720p 16x9)" copy."""
-    rows = s.execute(select(Video.rel_path, Video.id).where(
-        Video.rel_path.like("% (720p%).mp4"), Video.status == "READY")).all()
-    return dict(rows)
+    """rel_path -> id of every ready converted copy ("x (720p).mp4" or, for convention names, "x_720p.mp4")."""
+    rows = s.execute(select(Video.rel_path, Video.id).where(Video.status == "READY")).all()
+    return {rel: vid for rel, vid in rows if is_copy(rel)}
 
 
 def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str, int] | None = None,
@@ -42,7 +43,8 @@ def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str
         status=v.status, error=v.error, container=v.container, duration_s=v.duration_s, width=v.width,
         height=v.height, fps=v.fps, fps_text=v.fps_text, is_vfr=bool(v.is_vfr), video_codec=v.video_codec,
         video_profile=v.video_profile, pix_fmt=v.pix_fmt, bit_depth=v.bit_depth, audio_codec=v.audio_codec,
-        bitrate_bps=v.bitrate_bps, keyframe_interval_s=v.keyframe_interval_s, compat_mode=v.compat_mode,
+        bitrate_bps=v.bitrate_bps, keyframe_interval_s=v.keyframe_interval_s, b_frames=compatibility.b_frames(v.probe_json), quick_hash=v.quick_hash,
+        compat_mode=v.compat_mode,
         compat_reasons=v.compat_reasons or [], compat_warnings=v.compat_warnings or [],
         thumbnail_url=f"/api/videos/{v.id}/thumbnail?h={v.quick_hash[:8]}" if v.thumbnail else None,
         streams_using=streams_using, updated_at=v.updated_at, last_seen_at=v.last_seen_at,
@@ -54,7 +56,13 @@ def video_out(v: Video, streams_using: int = 0, converter=None, copies: dict[str
         uploaded_at=v.uploaded_at, uploaded_from=v.uploaded_from,
         uploaded_device=describe_agent(v.uploaded_agent),
         analytics=(links or {}).get(v.id, []),
+        name_parts=_parts(v.rel_path), original_name=v.original_name, previous_names=v.previous_names or [],
     )
+
+
+def _parts(rel_path: str) -> dict | None:
+    p = naming.parse(PurePosixPath(rel_path).name)
+    return None if p is None else {"what": p.what, "where": p.where, "nn": p.nn, "tags": p.tags}
 
 
 def video_links(s) -> dict[int, list[dict]]:
@@ -68,9 +76,9 @@ def video_links(s) -> dict[int, list[dict]]:
     return out
 
 
-def _origin(request: Request) -> dict:
-    """Where an upload came from: client IP (proxy headers trusted only from loopback) and browser."""
-    return {"ip": client_ip(request), "agent": request.headers.get("user-agent", "")}
+def _origin(request: Request, original_name: str | None = None) -> dict:
+    """Where an upload came from: client IP (proxy headers trusted only from loopback), browser, original name."""
+    return {"ip": client_ip(request), "agent": request.headers.get("user-agent", ""), "original_name": original_name}
 
 
 def _get(ctx: Context, video_id: int) -> Video:
@@ -88,7 +96,9 @@ def list_videos(search: str | None = Query(default=None, max_length=200),
     with ctx.db.session() as s:
         q = select(Video).order_by(Video.rel_path)
         if search:
-            q = q.where(Video.rel_path.ilike(f"%{search}%"))
+            # previous_names is JSON: compare its text (a JSON-typed bind would quote the pattern)
+            q = q.where(Video.rel_path.ilike(f"%{search}%") | cast(Video.previous_names, String).ilike(f"%{search}%")
+                        | Video.original_name.ilike(f"%{search}%"))
         if status:
             q = q.where(Video.status == status.upper())
         elif not include_missing:
@@ -111,7 +121,7 @@ async def refresh(ctx: Context = Depends(get_ctx), _: User = Depends(current_use
 def upload_check(body: UploadCheckIn, ctx: Context = Depends(get_ctx), _: User = Depends(require_operator)):
     """Pre-flight: is there room for this upload? Called before sending bytes."""
     try:
-        return ctx.library.upload_check(body.filename, body.size)
+        return ctx.library.upload_check(body.filename, body.size, body.quick_hash)
     except LibraryError as exc:
         raise HTTPException(exc.status_code, str(exc))
 
@@ -120,6 +130,7 @@ def upload_check(body: UploadCheckIn, ctx: Context = Depends(get_ctx), _: User =
              openapi_extra={"requestBody": {"content": {"application/octet-stream": {
                  "schema": {"type": "string", "format": "binary"}}}, "required": True}})
 async def upload(request: Request, filename: str = Query(..., max_length=512),
+                 original_name: str | None = Query(default=None, max_length=512),
                  ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
     """Upload a video as the raw request body (streamed to disk, never held in memory).
 
@@ -130,7 +141,8 @@ async def upload(request: Request, filename: str = Query(..., max_length=512),
     except ValueError:
         size = 0
     try:
-        video = await ctx.library.receive_upload(filename, size, request.stream(), user.username, _origin(request))
+        video = await ctx.library.receive_upload(filename, size, request.stream(), user.username,
+                                                 _origin(request, original_name))
     except ClientDisconnect:
         raise HTTPException(400, "Upload cancelled by the client; partial data was discarded.")
     except LibraryError as exc:
@@ -153,7 +165,7 @@ def start_upload(body: UploadCheckIn, request: Request, ctx: Context = Depends(g
     After a network failure, ``GET`` the session to learn the offset and continue.
     """
     try:
-        return ctx.library.start_session(body.filename, body.size, user.username, _origin(request))
+        return ctx.library.start_session(body.filename, body.size, user.username, _origin(request, body.original_name))
     except LibraryError as exc:
         raise _lib_error(exc)
 

@@ -25,8 +25,19 @@ class CompatResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def b_frames(probe_json: dict | None) -> bool | None:
+    """B-frames in the video track of a stored probe. Real cameras never send them; some edge
+    decoders then show frames out of order. None: unknown (not probed yet)."""
+    streams = (probe_json or {}).get("streams") or []
+    video = next((x for x in streams if x.get("codec_type") == "video"), None)
+    if video is None or video.get("has_b_frames") is None:
+        return None
+    return int(video["has_b_frames"]) > 0
+
+
 def evaluate(meta: dict, settings: Settings, decoders: frozenset[str],
-             x264_available: bool, force_transcode: bool = False) -> CompatResult:
+             x264_available: bool, force_transcode: bool = False,
+             extra_copy_codecs: tuple[str, ...] = ()) -> CompatResult:
     """``meta`` holds the probe fields (video_codec, pix_fmt, ...)."""
     codec = meta.get("video_codec")
     if not codec:
@@ -40,8 +51,9 @@ def evaluate(meta: dict, settings: Settings, decoders: frozenset[str],
     w, h = meta.get("width") or 0, meta.get("height") or 0
     fps = meta.get("fps")
 
-    if codec not in settings.copy_codecs:
-        reasons.append(f"Codec {codec.upper()} is not in the edge copy list ({', '.join(settings.copy_codecs)}).")
+    copy_codecs = [*settings.copy_codecs, *extra_copy_codecs]
+    if codec not in copy_codecs:
+        reasons.append(f"Codec {codec.upper()} is not in the edge copy list ({', '.join(copy_codecs)}).")
     if depth is not None and depth != 8:
         reasons.append(f"{depth}-bit video; the output profile requires 8-bit.")
     if pix_fmt and pix_fmt not in settings.copy_pix_fmts:
@@ -53,6 +65,9 @@ def evaluate(meta: dict, settings: Settings, decoders: frozenset[str],
     if fps and fps > settings.max_fps + 0.01:
         reasons.append(f"Frame rate {fps:.3f} exceeds {settings.max_fps:g} fps.")
 
+    if meta.get("has_b_frames"):
+        warnings.append("The video has B-frames; real cameras don't, and some edges show frames out of order. "
+                        "Make a camera copy in the library (no B-frames, keyframe every 2 s).")
     if meta.get("audio_codec"):
         warnings.append(f"Audio track ({meta['audio_codec']}) will be dropped.")
     if meta.get("is_vfr"):

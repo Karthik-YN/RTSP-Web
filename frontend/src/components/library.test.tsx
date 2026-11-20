@@ -76,12 +76,12 @@ describe("16:9 and standard output", () => {
     expect(blockedShape({ ...wide, is_16_9: false }, { ...out, require_16_9: false })).toBe(false);
   });
 
-  it("offers Standard and Original, and other sizes only to admins", async () => {
+  it("offers Same as the file and 720p, and other sizes only to admins", async () => {
     const onChange = vi.fn();
     const { rerender } = render(<OutputSizeField out={out} video={wide} value="standard" onChange={onChange} isAdmin={false} idPrefix="t" />);
     expect(screen.getByTestId("output-plan")).toHaveTextContent("Scaled live");
     expect(screen.queryByLabelText("Other output size")).toBeNull();
-    await userEvent.setup().click(screen.getByLabelText(/Original \(1920×1080\)/));
+    await userEvent.setup().click(screen.getByLabelText(/Same as the file \(1920×1080\)/));
     expect(onChange).toHaveBeenCalledWith("original");
     rerender(<OutputSizeField out={out} video={{ ...wide, copy_720p_id: 3 }} value="standard" onChange={onChange} isAdmin idPrefix="t" />);
     expect(screen.getByTestId("output-plan")).toHaveTextContent("720p copy");

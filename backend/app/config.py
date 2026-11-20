@@ -22,6 +22,9 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 CsvList = Annotated[list[str], NoDecode]
 
 
+INTERNAL_READER = "rtspstudio=internal"  # query on the app's own RTSP reads; see Settings.internal_read_url
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="RTSPM_",
@@ -113,6 +116,10 @@ class Settings(BaseSettings):
     transcode_max_width: int = 1920
     transcode_max_height: int = 1080
     output_fps_mode: Literal["passthrough", "cfr"] = "passthrough"
+    # Live-transcoding encoder: auto (best that works: NVIDIA > Intel iGPU > VAAPI > CPU), cpu, nvidia,
+    # intel or vaapi. Changeable on the Health page. GPUs must be passed into the container
+    # (docker-compose.gpu-nvidia.yml / docker-compose.gpu-intel.yml).
+    encoder: Literal["auto", "cpu", "nvidia", "intel", "vaapi"] = "auto"
     x264_threads: int = 0  # 0 = libx264 decides
     # "Convert to H.264" in the library: one-off, quality over speed, low priority
     convert_preset: str = "medium"
@@ -123,11 +130,14 @@ class Settings(BaseSettings):
     # 1080p sources reach it cheaply through a one-off "720p copy" (then copy mode).
     output_width: int = Field(default=1280, ge=160, le=3840)
     output_height: int = Field(default=720, ge=90, le=2160)
-    output_default: Literal["standard", "original"] = "standard"  # for new streams
+    output_default: Literal["standard", "original"] = "original"  # for new streams: same size as the file
     standard_sizes: CsvList = ["640x360", "1280x720", "1920x1080"]  # extra sizes admins may pick
     # Refuse streams from videos that are not 16:9 (portrait, 4:3...). They stay in the
     # library: play, download, or make a 16:9 copy (blurred bars / black bars / crop).
     require_16_9: bool = True
+    # Video naming convention for uploads (docs/PHASE12_PLAN.md): enforce = refuse other names,
+    # warn = accept and flag them in the library, off = no check. Changeable at runtime (PUT /api/settings/naming).
+    naming_mode: str = "enforce"
 
     # --------------------------------------------------------- stream policy
     stream_name_pattern: str = r"^[A-Za-z0-9_-]{1,64}$"
@@ -183,6 +193,8 @@ class Settings(BaseSettings):
     stream_log_backups: int = 2
     # Health page: automatic quick check (no RTSP reads) every N seconds; 0 = off.
     health_auto_interval_s: float = 600.0
+    health_full_interval_h: float = Field(default=24.0, ge=0)
+    ntp_server: str = "ntp.ubuntu.com"  # the health check measures this clock against it ("" = skip)  # automatic full test (reads every stream); 0 = off
     # Daily database backup inside the app (works in Docker too); 0 = off.
     backup_interval_h: float = 24.0
     backup_keep: int = 14
@@ -279,6 +291,11 @@ class Settings(BaseSettings):
 
     def publish_url(self, name: str) -> str:
         return f"{self.publish_rtsp_base.rstrip('/')}/{name}"
+
+    def internal_read_url(self, name: str) -> str:
+        """The app reading its own stream (snapshots, health test, browser preview copy): tagged so it is not
+        counted as a viewer (an edge or tester)."""
+        return f"{self.publish_url(name)}?{INTERNAL_READER}"
 
     def ensure_dirs(self) -> None:
         for p in (self.data_dir, self.video_dir, self.log_path, self.log_path / "streams",

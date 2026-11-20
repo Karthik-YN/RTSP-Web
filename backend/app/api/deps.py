@@ -37,6 +37,7 @@ class Context:
     network: AddressWatcher | None = None
     health: object = None   # services.health_test.HealthTester
     backups: object = None  # services.health_test.BackupService
+    live_previews: object = None  # services.live_preview.LivePreviews
 
 
 def get_ctx(request: Request) -> Context:

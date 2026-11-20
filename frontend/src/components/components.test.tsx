@@ -93,6 +93,33 @@ describe("CreateStreamDialog", () => {
     expect(created).toBe(true);
   });
 
+  it("offers the server clock explicitly (off by default), with IST or UTC", async () => {
+    let body: Record<string, unknown> | null = null;
+    mockFetch((url, init) => {
+      if (url.includes("/validate")) return okValidation;
+      if (url === "/api/streams" && init?.method === "POST") { body = JSON.parse(String(init.body)); return { id: 9, name: "cam2", rtsp_url: "rtsp://rig02:8554/cam2" }; }
+      return {};
+    });
+    const user = userEvent.setup();
+    const withClock = { ...config, features: ["clock_overlay"] } as typeof config;
+    render(<ToastProvider><CreateStreamDialog videos={[video]} streams={[]} config={withClock} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
+    const box = screen.getByRole("checkbox", { name: /Server clock in picture/ });
+    expect(box).not.toBeChecked();
+    expect(screen.queryByRole("radiogroup", { name: "Clock time zone" })).toBeNull();
+    await user.click(box);
+    expect(screen.getByRole("radio", { name: /IST/ })).toBeChecked(); // IST unless UTC is picked
+    await user.click(screen.getByRole("radio", { name: "UTC" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Create/ })).toBeEnabled(), { timeout: 3000 });
+    await user.click(screen.getByRole("button", { name: /Create/ }));
+    await waitFor(() => expect(body).toMatchObject({ clock: true, clock_tz: "UTC" }));
+  });
+
+  it("hides the clock option on servers that don't have it", () => {
+    mockFetch(() => okValidation);
+    render(<ToastProvider><CreateStreamDialog videos={[video]} streams={[]} config={config} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
+    expect(screen.queryByTestId("clock-field")).toBeNull();
+  });
+
   it("blocks names already used by existing streams", async () => {
     mockFetch(() => okValidation);
     const user = userEvent.setup();

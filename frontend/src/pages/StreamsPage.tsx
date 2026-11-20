@@ -13,9 +13,6 @@ export function StreamsPage() {
   const navigate = useNavigate();
   const create = useCreateStream();
   const list = rig.streams ?? [];
-  const live = list.filter((s) => s.status === "RUNNING").length;
-  const problems = list.filter(isProblem).length;
-  const cap = rig.system?.streams;
   const groups = usePolling(api.groups, 5000);
 
   return (
@@ -27,15 +24,7 @@ export function StreamsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat icon={<CameraIcon />} tone="emerald" label="Live" value={rig.streams ? `${live}` : null} sub={`of ${list.length} streams`} />
-        <Stat icon={<AlertIcon />} tone={problems ? "red" : "slate"} label="Needs attention" value={rig.streams ? `${problems}` : null}
-          sub={problems ? "see the red cards" : "all good"} />
-        <Stat icon={<EyeIcon />} tone="blue" label="Viewers" value={rig.system ? `${rig.system.viewers ?? "?"}` : null} sub="RTSP readers (edges)" />
-        <Stat icon={<ServerIcon />} tone={cap && cap.desired_running >= cap.max_active ? "red" : "violet"} label="Capacity"
-          value={cap ? `${cap.desired_running}/${cap.max_active}` : null}
-          sub={cap ? `${cap.transcoding}/${cap.max_transcode} transcoding` : ""} />
-      </div>
+      <StreamsSummary />
 
       {rig.streamsLoading && !rig.streams ? (
         <div className="grid gap-3 xl:grid-cols-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-36" />)}</div>
@@ -48,6 +37,7 @@ export function StreamsPage() {
           groups={groups.data ?? []} onGroupsChanged={groups.refresh}
           onClone={(s) => s.video_id && create(s.video_id, {
             videoId: s.video_id, name: s.name, mode: s.playback_mode, forceTranscode: s.force_transcode,
+            clock: s.clock, clockTz: s.clock_tz,
             start: formatTime(s.start_offset_s, true), end: s.end_offset_s !== null ? formatTime(s.end_offset_s, true) : "",
           })} />
       )}
@@ -55,23 +45,30 @@ export function StreamsPage() {
   );
 }
 
-const TONES: Record<string, string> = {
-  emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  red: "bg-red-500/10 text-red-600 dark:text-red-400",
-  blue: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  slate: "bg-slate-500/10 text-muted",
-};
-
-function Stat({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string | null; sub: string; tone: string }) {
+/**
+ * One line with the same numbers the Overview shows as cards (live, needs attention, viewers, capacity).
+ * Its own component: CPU/capacity updates redraw this line only, not the stream list.
+ */
+function StreamsSummary() {
+  const { streams, system } = useRig();
+  const list = streams ?? [];
+  const live = list.filter((s) => s.status === "RUNNING").length;
+  const problems = list.filter(isProblem).length;
+  const cap = system?.streams;
+  const full = cap && cap.desired_running >= cap.max_active;
+  const item = "inline-flex items-center gap-1.5 whitespace-nowrap";
   return (
-    <div className="card flex items-center gap-3 p-4">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${TONES[tone]}`}>{icon}</span>
-      <div className="min-w-0">
-        <div className="text-xs font-medium text-muted">{label}</div>
-        {value === null ? <Skeleton className="mt-1 h-6 w-12" /> : <div className="text-2xl font-bold tabular-nums leading-tight">{value}</div>}
-        <div className="truncate text-xs text-subtle">{sub}</div>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted" data-testid="streams-summary">
+      <span className={item}><CameraIcon className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+        <b className="tabular-nums text-fg">{streams ? live : "–"}</b> live of {list.length}</span>
+      <span className={item}><AlertIcon className={`h-4 w-4 ${problems ? "text-red-600" : ""}`} />
+        <b className={`tabular-nums ${problems ? "text-red-600 dark:text-red-400" : "text-fg"}`}>{streams ? problems : "–"}</b> need attention</span>
+      <span className={item} title="RTSP readers (edges)"><EyeIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+        <b className="tabular-nums text-fg">{system ? system.viewers ?? "?" : "–"}</b> viewers</span>
+      <span className={item} title="Streams set to run / the server's limit · live transcodes / their limit">
+        <ServerIcon className={`h-4 w-4 ${full ? "text-red-600" : "text-violet-600 dark:text-violet-400"}`} />
+        capacity <b className={`tabular-nums ${full ? "text-red-600" : "text-fg"}`}>{cap ? `${cap.desired_running}/${cap.max_active}` : "–"}</b>
+        {cap && <span className="text-subtle">· {cap.transcoding}/{cap.max_transcode} transcoding</span>}</span>
     </div>
   );
 }

@@ -185,8 +185,8 @@ def test_user_store(tmp_path):
 # ---------------------------------------------------------------- database
 def test_migrations_match_orm_and_enforce_constraints(tmp_path):
     db = Database(tmp_path / "t.db")
-    assert db.migrate() == 7
-    assert db.migrate() == 7  # idempotent
+    assert db.migrate() == 8
+    assert db.migrate() == 8  # idempotent
     insp = inspect(db.engine)
     for table in Base.metadata.sorted_tables:
         cols = {c["name"] for c in insp.get_columns(table.name)}
@@ -222,7 +222,7 @@ def test_migration_upgrades_a_v1_database_in_place(tmp_path):
                 "'RUNNING','now','now','alice')")
     con.commit()
     con.close()
-    assert Database(path).migrate() == 7
+    assert Database(path).migrate() == 8
     con = sq.connect(path)
     assert con.execute("select name, owner, protected, group_id, slot_id from streams").fetchone() == \
         ("cam", "alice", 0, None, None)

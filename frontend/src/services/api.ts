@@ -1,8 +1,9 @@
 import type {
+  ClockTz,
   Conversion,
   ConvertFit,
   ConvertProfile,
-  AnalyticsCategory, AnalyticsDetail, AnalyticsSuggestion, AssignResult, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, HealthReport, LeadInMode, MediaMTXStatus, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
+  AnalyticsCategory, AnalyticsDetail, AnalyticsSuggestion, AssignResult, AnalyticsSlot, AppConfig, AppEvent, BulkResult, Capacity, EncoderChoice, Encoders, HealthReport, LeadInMode, MediaMTXStatus, NamingConvention, RenameResult, RunResult, Stream, StreamDetail, StreamGroup, StreamHistory, SystemInfo, UploadCheck, User, ValidateResult, Video,
 } from "../types/api";
 
 /** Error carrying the server's message (FastAPI `detail`) and extra fields. */
@@ -106,6 +107,9 @@ export interface StreamInput {
   lead_in_mode?: LeadInMode;
   lead_in_s?: number;
   hold_max_s?: number | null;
+  /** server clock drawn on every frame (re-encodes) */
+  clock?: boolean;
+  clock_tz?: ClockTz;
 }
 
 export interface RunInput {
@@ -120,6 +124,9 @@ export interface RunInput {
   lead_in_mode?: LeadInMode;
   lead_in_s?: number;
   hold_max_s?: number | null;
+  /** server clock drawn on every frame (re-encodes) */
+  clock?: boolean;
+  clock_tz?: ClockTz;
 }
 
 async function text(url: string, what: string): Promise<string> {
@@ -143,6 +150,12 @@ export const api = {
   healthTest: (quick = false) => request<HealthReport>("POST", `/api/health/test${quick ? "?quick=true" : ""}`),
   lastHealth: () => request<{ full: HealthReport | null; quick: HealthReport | null; auto_interval_s: number }>("GET", "/api/health/test/last"),
   capacity: () => request<Capacity>("GET", "/api/settings/capacity"),
+  codecs: () => request<{ copy_codecs: string[]; hevc_passthrough: boolean }>("GET", "/api/settings/codecs"),
+  setCodecs: (hevc_passthrough: boolean) =>
+    request<{ copy_codecs: string[]; hevc_passthrough: boolean }>("PUT", "/api/settings/codecs", { hevc_passthrough }),
+  encoders: () => request<Encoders>("GET", "/api/system/encoders"),
+  setEncoder: (choice: EncoderChoice | null) => request<Encoders>("PUT", "/api/system/encoders", { choice }),
+  detectEncoders: () => request<Encoders>("POST", "/api/system/encoders/detect"),
   setCapacity: (body: { max_active_streams?: number; max_transcode_streams?: number; reset?: string[] }) =>
     request<Capacity>("PUT", "/api/settings/capacity", body),
   backupNow: () => request<{ message: string; name: string }>("POST", "/api/backup"),
@@ -168,8 +181,14 @@ export const api = {
     request<Video[]>("GET", `/api/videos${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   refreshVideos: () => request<{ added: number; updated: number; missing: number; settling: string[] }>(
     "POST", "/api/videos/refresh"),
-  uploadCheck: (filename: string, size: number) =>
-    request<UploadCheck>("POST", "/api/videos/upload/check", { filename, size }),
+  uploadCheck: (filename: string, size: number, quick_hash?: string) =>
+    request<UploadCheck>("POST", "/api/videos/upload/check", quick_hash ? { filename, size, quick_hash } : { filename, size }),
+  naming: () => request<NamingConvention>("GET", "/api/naming"),
+  namingCheck: (name: string) =>
+    request<{ ok: boolean; errors: string[]; taken: boolean; suggestion?: string | null }>("POST", "/api/naming/check", { name }),
+  setNamingMode: (mode: "enforce" | "warn" | "off" | null) => request<{ mode: string }>("PUT", "/api/settings/naming", { mode }),
+  renameVideo: (id: number, name: string, dry_run = false) =>
+    request<RenameResult>("POST", `/api/videos/${id}/rename`, { name, dry_run }),
 
   streams: () => request<Stream[]>("GET", "/api/streams"),
   stream: (id: number) => request<StreamDetail>("GET", `/api/streams/${id}`),
@@ -205,8 +224,8 @@ export const api = {
   analyticsSuggestions: () => request<AnalyticsSuggestion[]>("GET", "/api/analytics/suggestions"),
   assignVideos: (video_ids: number[], analytics_ids: number[]) =>
     request<AssignResult>("POST", "/api/analytics/assign", { video_ids, analytics_ids }),
-  createAnalytics: (name: string, category_id: number, description?: string) =>
-    request<{ id: number }>("POST", "/api/analytics", { name, category_id, description }),
+  createAnalytics: (name: string, category_id: number, description?: string, code?: string) =>
+    request<{ id: number }>("POST", "/api/analytics", { name, category_id, description, code }),
   updateAnalytics: (id: number, body: { name?: string; description?: string; category_id?: number }) =>
     request<{ id: number }>("PATCH", `/api/analytics/${id}`, body),
   deleteAnalytics: (id: number) => request<void>("DELETE", `/api/analytics/${id}`),
@@ -255,13 +274,15 @@ function putChunk(sessionId: string, offset: number, blob: Blob, onProgress: (se
 export function uploadVideo(
   file: File,
   onProgress: (loaded: number, total: number, note?: string) => void,
+  /** name in the library (naming convention); the file's own name is kept as original_name */
+  name: string = file.name,
 ): { promise: Promise<Video>; abort: () => void } {
   let current: XMLHttpRequest | null = null;
   let aborted = false;
   let sessionId: string | null = null;
   const promise = (async () => {
     const session = await request<{ id: string; offset: number }>("POST", "/api/videos/uploads",
-      { filename: file.name, size: file.size });
+      { filename: name, size: file.size, original_name: name !== file.name ? file.name : undefined });
     sessionId = session.id;
     let offset = session.offset;
     let failures = 0;

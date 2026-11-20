@@ -74,6 +74,23 @@ def _cmd_first_line(argv: list[str], timeout: float = 5.0) -> str | None:
     return out[0] if out else None
 
 
+def sntp_offset_ms(server: str, timeout: float = 3.0) -> tuple[float, float]:
+    """(offset, round trip) in ms of this clock against an NTP server: one SNTP request (RFC 4330)."""
+    import socket
+    import struct
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+        sk.settimeout(timeout)
+        t1 = time.time()
+        sk.sendto(b"\x1b" + 47 * b"\0", (server, 123))
+        data, _ = sk.recvfrom(48)
+        t4 = time.time()
+    if len(data) < 48:
+        raise OSError("short NTP reply")
+    ts = lambda o: struct.unpack("!I", data[o:o + 4])[0] + struct.unpack("!I", data[o + 4:o + 8])[0] / 2 ** 32 - 2208988800
+    t2, t3 = ts(32), ts(40)
+    return ((t2 - t1) + (t3 - t4)) / 2 * 1000, ((t4 - t1) - (t3 - t2)) * 1000
+
+
 class HealthTester:
     def __init__(self, ctx):
         self.ctx = ctx
@@ -200,14 +217,27 @@ class HealthTester:
         return Check("backup", "Recent backup", st, f"Newest database backup is {age_h:.1f} h old")
 
     async def _clock(self) -> Check:
+        """Is the server clock right? (It is drawn on streams with the clock option and stamps every event.)"""
         out = await asyncio.to_thread(_cmd_first_line, ["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
         if out == "yes":
             return Check("clock", "Clock synchronised", PASS, "NTP synchronised (timedatectl)")
         if out == "no":
             return Check("clock", "Clock synchronised", WARN, "NTP is not synchronised: event times and the slate "
                          "clock may drift. Enable systemd-timesyncd or chrony.")
-        return Check("clock", "Clock synchronised", SKIP, "Not checkable here (container or non-systemd host: "
-                     "the host's clock is used)")
+        # In the container: ask the NTP server directly how far this clock is off (the clock drawn on streams)
+        if not self.s.ntp_server:
+            return Check("clock", "Clock synchronised", SKIP, "No NTP server set (RTSPM_NTP_SERVER)")
+        try:
+            off_ms, rtt_ms = await asyncio.to_thread(sntp_offset_ms, self.s.ntp_server)
+        except OSError as exc:
+            return Check("clock", "Clock synchronised", SKIP, f"NTP server {self.s.ntp_server} not reachable ({exc})")
+        data = {"offset_ms": round(off_ms, 1), "round_trip_ms": round(rtt_ms, 1), "server": self.s.ntp_server}
+        msg = f"{off_ms:+.0f} ms from {self.s.ntp_server} (measured over a {rtt_ms:.0f} ms round trip)"
+        if abs(off_ms) <= 100:
+            return Check("clock", "Clock synchronised", PASS, msg, data=data)
+        if abs(off_ms) <= 500:
+            return Check("clock", "Clock synchronised", WARN, msg + ": the clock drawn on streams is off by this much", data=data)
+        return Check("clock", "Clock synchronised", FAIL, msg + ": fix NTP on the server (timedatectl set-ntp true)", data=data)
 
     async def _headroom(self) -> Check:
         smp = self.ctx.sysmon.sample or {}
@@ -238,7 +268,7 @@ class HealthTester:
                 proc = await asyncio.create_subprocess_exec(
                     self.s.ffprobe_bin, "-v", "error", "-rtsp_transport", "tcp", "-read_intervals", "%+2",
                     "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0",
-                    self.s.publish_url(name), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                    self.s.internal_read_url(name), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 try:
                     out, _ = await asyncio.wait_for(proc.communicate(), 8)
                 except asyncio.TimeoutError:
@@ -315,11 +345,27 @@ class HealthTester:
             self.ctx.events.add(kind, f"Automatic health check {report['overall']}: {text}", level=level,
                                 data=report["summary"])
 
+    def full_due(self, now: float | None = None) -> bool:
+        """Is a full test (including 2 s reads of every stream) due? Once per health_full_interval_h."""
+        h = self.s.health_full_interval_h
+        if h <= 0:
+            return False
+        if not self.last:
+            return True
+        try:
+            from datetime import datetime
+            age = (now or time.time()) - datetime.fromisoformat(self.last["started_at"].replace("Z", "+00:00")).timestamp()
+        except (KeyError, ValueError):
+            return True
+        return age >= h * 3600
+
     async def loop(self, interval_s: float) -> None:
         await asyncio.sleep(min(60.0, interval_s))  # let start-up recovery finish first
         while True:
             with contextlib.suppress(Exception):
-                await self.run(quick=True)
+                # the full test (reads every stream for 2 s, tagged as the app's own read) once a day,
+                # so the Health page never shows a day-old report; the quick check the rest of the time
+                await self.run(quick=not self.full_due(), username="automatic")
             await asyncio.sleep(interval_s)
 
     def start(self, interval_s: float) -> None:

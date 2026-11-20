@@ -1,16 +1,19 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { api, ApiError } from "../services/api";
 import { useRig } from "../hooks/useRigData";
 import { HOST_KIND_LABEL, urlHost, useRtspAddress } from "../hooks/useRtspAddress";
 import { formatBitrate, formatBytes, formatDuration } from "../lib/format";
 import { useTheme, type ThemePref } from "../lib/theme";
-import { Avatar, ErrorBox, Modal, Skeleton, Spinner, useToast, WarnBox } from "./common";
+import { Avatar, ErrorBox, Modal, Spinner, useToast, WarnBox } from "./common";
 import { CreateStreamDialog, type StreamTemplate } from "./CreateStreamDialog";
+import { NamingGuideButton, refreshNaming } from "./Naming";
+import { formatClock, useRigClock } from "../lib/rigClock";
 import { isProblem } from "./StreamsTable";
+import { conversionSummary, type ConversionSummary } from "../lib/edge";
 import {
-  ActivityIcon, CameraIcon, ChevronIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
-  PlusIcon, SearchIcon, ServerIcon, SunIcon, UsersIcon,
+  CameraIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
+  HomeIcon, PlusIcon, ServerIcon, SunIcon, UsersIcon,
 } from "./icons";
 
 // ------------------------------------------------------------------ create-stream launcher
@@ -35,7 +38,7 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
   }, [rig.user.can_write]);
 
   const live = rig.streams?.filter((s) => s.status === "RUNNING").length ?? 0;
-  useEffect(() => { document.title = `${live} live · RIG-02`; }, [live]);
+  useEffect(() => { document.title = `${live} live · RTSP Studio`; }, [live]);
 
   const create = useCallback((videoId?: number, template?: StreamTemplate) => setCreating({ videoId, template }), []);
 
@@ -63,36 +66,36 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, streams, videos, config } = useRig();
   const problems = streams?.filter(isProblem).length ?? 0;
   const items: { to: string; label: string; icon: ReactNode; badge?: ReactNode }[] = [
+    { to: "/", label: "Overview", icon: <HomeIcon /> },
     { to: "/streams", label: "Streams", icon: <GridIcon />,
       badge: problems ? <Badge tone="bad">{problems}</Badge> : streams ? <Badge>{streams.length}</Badge> : null },
-    { to: "/library", label: "Shared video library", icon: <FilmIcon />, badge: videos ? <Badge>{videos.length}</Badge> : null },
-    { to: "/health", label: "Health", icon: <ServerIcon /> },
-    { to: "/events", label: "Events", icon: <ActivityIcon /> },
+    { to: "/library", label: "Library", icon: <FilmIcon />, badge: videos ? <Badge>{videos.length}</Badge> : null },
+    { to: "/system", label: "System", icon: <ServerIcon /> },
   ];
   if (user.is_admin && user.auth_enabled) items.push({ to: "/users", label: "Users", icon: <UsersIcon /> });
   return (
     <>
       {open && <div className="fixed inset-0 z-30 bg-slate-950/50 lg:hidden" onClick={onClose} />}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-line bg-surface transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-line bg-surface transition-transform lg:sticky lg:top-0 lg:h-screen lg:w-56 lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-2.5 px-4 py-4">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
             <CameraIcon />
           </span>
           <div className="leading-tight">
-            <div className="text-sm font-bold">RIG-02</div>
-            <div className="text-xs text-muted">Stream Manager</div>
+            <div className="text-sm font-bold">RTSP Studio</div>
+            <div className="text-xs text-muted">rig02 · test cameras</div>
           </div>
         </div>
         <nav className="space-y-0.5 px-2" aria-label="Main">
           {items.map((it) => (
-            <NavLink key={it.to} to={it.to}
+            <NavLink key={it.to} to={it.to} end={it.to === "/"}
               className={({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive
                 ? "bg-brand-soft text-brand" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
               {it.icon}<span className="flex-1">{it.label}</span>{it.badge}
             </NavLink>
           ))}
         </nav>
-        <AnalyticsNav />
+        <div className="flex-1" />
         <div className="border-t border-line px-4 py-3 text-xs text-subtle">
           <RtspAddressPicker port={config.public_rtsp_port} />
           <div>v{config.version}</div>
@@ -113,7 +116,7 @@ export function RtspAddressPicker({ port }: { port: number }) {
     <div className="space-y-1">
       <label className="block">
         <span className="sr-only">RTSP address</span>
-        <span className="mb-0.5 block text-[11px] uppercase tracking-wide">URLs use</span>
+        <span className="mb-0.5 block text-[11px] uppercase tracking-wide">Copied URLs use</span>
         <select className="input h-8 w-full py-0 font-mono text-xs" value={addr.host ?? ""} aria-label="RTSP address"
           title="Server address used in copied RTSP URLs" onChange={(e) => addr.setHost(e.target.value)}>
           {addr.hosts.map((h) => (
@@ -136,101 +139,15 @@ export function RtspAddressPicker({ port }: { port: number }) {
   );
 }
 
-const FOLDED_KEY = "rig02.analytics.folded";
-
-/** Fast access to every analytics, grouped by category, with live/total stream counts. */
-export function AnalyticsNav() {
-  const { analytics, user, refreshAnalytics } = useRig();
-  const toast = useToast();
-  const [q, setQ] = useState("");
-  const [folded, setFolded] = useState<number[]>(() => {
-    try { return JSON.parse(localStorage.getItem(FOLDED_KEY) ?? "[]"); } catch { return []; }
-  });
-  const [adding, setAdding] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-  // "/" jumps to the analytics search (unless typing in a field already)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
-      e.preventDefault();
-      searchRef.current?.focus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  const toggle = (id: number) => {
-    const next = folded.includes(id) ? folded.filter((x) => x !== id) : [...folded, id];
-    setFolded(next);
-    try { localStorage.setItem(FOLDED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
-  };
-  const needle = q.trim().toLowerCase();
-  const cats = (analytics ?? []).map((c) => ({
-    ...c, analytics: c.analytics.filter((a) => !needle || a.name.toLowerCase().includes(needle)
-      || c.name.toLowerCase().includes(needle)),
-  })).filter((c) => !needle || c.analytics.length);
-  return (
-    <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-line pt-3">
-      <div className="flex items-center gap-2 px-4 pb-2">
-        <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-subtle">Analytics</span>
-        {user.can_write && (
-          <button className="btn-ghost p-1" onClick={() => setAdding(true)} title="New analytics" aria-label="New analytics">
-            <PlusIcon className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-      <div className="px-3 pb-2">
-        <div className="relative">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-subtle" />
-          <input ref={searchRef} className="input h-8 py-1 pl-8 text-xs" placeholder="Find an analytics  ( / )" value={q}
-            onChange={(e) => setQ(e.target.value)} aria-label="Find an analytics" />
-        </div>
-      </div>
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Analytics">
-        {!analytics && <div className="space-y-2 px-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-5" />)}</div>}
-        {analytics && !cats.length && <p className="px-3 text-xs text-muted">No analytics match "{q}".</p>}
-        {cats.map((c) => {
-          const isOpen = !!needle || !folded.includes(c.id);
-          const live = c.analytics.reduce((n, a) => n + a.running, 0);
-          return (
-            <div key={c.id} className="mb-1">
-              <button className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-muted hover:text-fg"
-                onClick={() => toggle(c.id)} aria-expanded={isOpen}>
-                <ChevronIcon className={`h-3 w-3 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                <span className="flex-1 text-left">{c.name}</span>
-                {live > 0 && <span className="text-emerald-600 dark:text-emerald-400" title="Live streams">{live} live</span>}
-              </button>
-              {isOpen && c.analytics.map((a) => (
-                <NavLink key={a.id} to={`/analytics/${a.id}`} title={a.description ?? a.name}
-                  className={({ isActive }) => `ml-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${isActive
-                    ? "bg-brand-soft font-medium text-brand" : "text-muted hover:bg-surface-2 hover:text-fg"} ${!a.slots && !isActive ? "opacity-60" : ""}`}>
-                  <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                  {a.problems > 0 && <span className="h-2 w-2 rounded-full bg-red-500" title={`${a.problems} stream(s) need attention`} />}
-                  {a.streams > 0
-                    ? <span className="tabular-nums text-xs text-subtle" title={`${a.running} live of ${a.streams} streams`}>{a.running}/{a.streams}</span>
-                    : (a.videos ?? a.slots) > 0 ? <span className="text-xs text-subtle" title="Videos in this analytics">{a.videos ?? a.slots} vid</span> : null}
-                </NavLink>
-              ))}
-            </div>
-          );
-        })}
-      </nav>
-      {adding && analytics && (
-        <NewAnalyticsDialog categories={analytics} onClose={() => setAdding(false)}
-          onCreated={() => { setAdding(false); refreshAnalytics(); toast("ok", "Analytics added."); }} />
-      )}
-    </div>
-  );
-}
-
-function NewAnalyticsDialog({ categories, onClose, onCreated }: {
+/** New analytics (name, category, optional WHAT code for video names); opened from the Overview page. */
+export function NewAnalyticsDialog({ categories, onClose, onCreated }: {
   categories: { id: number; name: string }[]; onClose: () => void; onCreated: () => void;
 }) {
   const [name, setName] = useState("");
   const [cat, setCat] = useState<string>(String(categories[0]?.id ?? "new"));
   const [newCat, setNewCat] = useState("");
   const [desc, setDesc] = useState("");
+  const [code, setCode] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -238,7 +155,8 @@ function NewAnalyticsDialog({ categories, onClose, onCreated }: {
     setErr(null);
     try {
       const cid = cat === "new" ? (await api.createCategory(newCat.trim())).id : Number(cat);
-      await api.createAnalytics(name.trim(), cid, desc.trim() || undefined);
+      await api.createAnalytics(name.trim(), cid, desc.trim() || undefined, code.trim() || undefined);
+      refreshNaming();
       onCreated();
     } catch (e) {
       setErr((e as ApiError).message);
@@ -246,7 +164,8 @@ function NewAnalyticsDialog({ categories, onClose, onCreated }: {
       setBusy(false);
     }
   };
-  const ok = name.trim() && (cat !== "new" || newCat.trim());
+  const codeOk = !code || /^[A-Z][A-Z0-9]{1,7}$/.test(code);
+  const ok = name.trim() && (cat !== "new" || newCat.trim()) && codeOk;
   return (
     <Modal title="New analytics" onClose={onClose}>
       <div className="space-y-3">
@@ -261,6 +180,13 @@ function NewAnalyticsDialog({ categories, onClose, onCreated }: {
             <option value="new">+ New category…</option>
           </select>
           {cat === "new" && <input className="input mt-2" value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="Category name" aria-label="New category name" />}
+        </div>
+        <div>
+          <label className="label" htmlFor="an-code">Code in video names (optional)</label>
+          <input id="an-code" className={`input font-mono ${codeOk ? "" : "input-error"}`} value={code} maxLength={8}
+            placeholder="e.g. RLVD — chosen from the name if empty"
+            onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} />
+          <p className="mt-1 text-xs text-muted">The WHAT part of <span className="font-mono">WHAT_WHERE_NN</span>: 2–8 capital letters/digits.</p>
         </div>
         <div>
           <label className="label" htmlFor="an-desc">Description (optional)</label>
@@ -304,6 +230,9 @@ function TopBar({ onMenu, onCreate, onLogout }: { onMenu: () => void; onCreate: 
         <button className="btn-ghost p-1.5 lg:hidden" onClick={onMenu} aria-label="Open menu"><MenuIcon /></button>
         <HealthPills />
         <div className="ml-auto flex items-center gap-2">
+          <ConversionChip />
+          <RigClockChip />
+          <NamingGuideButton />
           {user.can_write && (
             <button className="btn-primary whitespace-nowrap" onClick={onCreate} title="New stream (N)">
               <PlusIcon /> <span className="hidden sm:inline">New stream</span>
@@ -314,6 +243,73 @@ function TopBar({ onMenu, onCreate, onLogout }: { onMenu: () => void; onCreate: 
         </div>
       </div>
     </header>
+  );
+}
+
+/** Poll the conversion queue: every 5 s while something is queued/running, else every 30 s; never in hidden tabs. */
+export function useConversionSummary(activeMs = 5000, idleMs = 30000): ConversionSummary | null {
+  const [sum, setSum] = useState<ConversionSummary | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let active = false;
+    const tick = async () => {
+      timer = null;
+      if (document.hidden) return; // resumed by visibilitychange
+      try {
+        const next = conversionSummary(await api.conversions());
+        active = !!next;
+        if (alive) setSum((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      } catch {
+        /* endpoint down or not allowed: keep the last state, try again later */
+      }
+      if (alive && !timer) timer = setTimeout(tick, active ? activeMs : idleMs);
+    };
+    const onVis = () => {
+      if (document.hidden || !alive) return;
+      if (timer) clearTimeout(timer);
+      void tick();
+    };
+    void tick();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [activeMs, idleMs]);
+  return sum;
+}
+
+/** The rig's own time (IST, hours:minutes: the screen changes once a minute); opens the big Rig clock page with ms. */
+function RigClockChip() {
+  const [clock] = useRigClock();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) setNow(Date.now()); }, 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!clock) return null;
+  const rig = now + clock.offsetMs;
+  return (
+    <Link to="/clock" className="hidden whitespace-nowrap rounded-full px-2.5 py-1 font-mono text-xs tabular-nums text-muted ring-1 ring-inset ring-line hover:text-fg md:inline-flex"
+      title={`The rig's clock (±${Math.round(clock.errorMs)} ms). Click for the big clock with milliseconds.`} aria-label="Rig clock">
+      {formatClock(rig, "IST", false).slice(0, 5)} IST
+    </Link>
+  );
+}
+
+/** "Converting 2 · 45%" while the library converts videos; hidden otherwise. */
+function ConversionChip() {
+  const sum = useConversionSummary();
+  if (!sum) return null;
+  return (
+    <Link to="/library" title={sum.title} aria-label={`Converting ${sum.active} video${sum.active > 1 ? "s" : ""}`}
+      className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-500/25 hover:bg-blue-500/20 dark:text-blue-300">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+      <span className="hidden sm:inline">Converting {sum.active}</span>
+      <span className="tabular-nums"><span className="hidden sm:inline"> · </span>{sum.percent != null ? `${sum.percent}%` : "queued"}</span>
+    </Link>
   );
 }
 
@@ -519,7 +515,15 @@ function Banners() {
   if (!appError && !down && !recentRecovery && warnings.length === 0) return null;
   return (
     <div className="mx-auto w-full max-w-[100rem] space-y-2 px-4 pt-4 sm:px-6">
-      {appError && <ErrorBox>The server is not responding. Showing the last known state; retrying every 2 s.</ErrorBox>}
+      {appError && (
+        <ErrorBox>
+          <span role="status" data-testid="offline-banner">
+            {appError.status === 0 ? "Connection to the server lost" : `The server is failing (${appError.status})`}
+            {(appError as { since?: number }).since ? ` since ${new Date((appError as { since?: number }).since!).toLocaleTimeString()}` : ""}.
+            {" "}What you see is the last known state, not live; retrying every 2 s.
+          </span>
+        </ErrorBox>
+      )}
       {down && (
         <ErrorBox>
           <b>The RTSP server (MediaMTX) is down</b>

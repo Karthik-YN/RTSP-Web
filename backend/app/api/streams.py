@@ -44,6 +44,7 @@ def stream_out(ctx: Context, row: Stream, proc_index: dict | None = None) -> Str
         playback_mode=row.playback_mode, playback_speed=row.playback_speed,
         force_transcode=bool(row.force_transcode), output_mode=row.output_mode,
         output_size=(row.config_json or {}).get("output_size") or "original",
+        clock=bool((row.config_json or {}).get("clock")), clock_tz=(row.config_json or {}).get("clock_tz") or "IST",
         output_resolution=_out_res(row),
         desired_state=row.desired_state, status=row.status, status_detail=row.status_detail, pid=row.pid,
         last_error=row.last_error, loop_count=row.loop_count, restart_count=row.restart_count,
@@ -73,7 +74,8 @@ def _cfg(body, row: Stream | None = None, default_output: str = "original") -> S
     if row is None:
         return StreamConfig(video_id=body.video_id, start_s=start, end_s=end, mode=body.mode,
                             force_transcode=body.force_transcode,
-                            output_size=getattr(body, "output_size", None) or default_output)
+                            output_size=getattr(body, "output_size", None) or default_output,
+                            clock=bool(getattr(body, "clock", False)), clock_tz=getattr(body, "clock_tz", None) or "IST")
     new_video = body.video_id is not None and body.video_id != row.video_id
     return StreamConfig(
         video_id=body.video_id if body.video_id is not None else row.video_id,
@@ -83,6 +85,8 @@ def _cfg(body, row: Stream | None = None, default_output: str = "original") -> S
         force_transcode=body.force_transcode if body.force_transcode is not None else bool(row.force_transcode),
         output_size=getattr(body, "output_size", None) or (row.config_json or {}).get("output_size") or "original",
         enforce_shape=new_video,
+        clock=body.clock if getattr(body, "clock", None) is not None else bool((row.config_json or {}).get("clock")),
+        clock_tz=getattr(body, "clock_tz", None) or (row.config_json or {}).get("clock_tz") or "IST",
     )
 
 
@@ -166,7 +170,7 @@ async def update_stream(stream_id: int, body: StreamUpdate, version: int | None 
     if body.protected is not None and not (user.is_admin or user.username == row.owner):
         raise HTTPException(403, "Only the owner or an admin can protect or unprotect a stream.")
     touches_cfg = any(v is not None for v in (body.video_id, body.start, body.end, body.mode,
-                                              body.force_transcode, body.output_size)) or body.clear_end
+                                              body.force_transcode, body.output_size, body.clock, body.clock_tz)) or body.clear_end
     meta = {k: v for k, v in (("note", body.note), ("protected", body.protected), ("owner", body.owner),
                               ("lead_in_mode", body.lead_in_mode), ("lead_in_s", body.lead_in_s),
                               ("hold_max_s", body.hold_max_s)) if v is not None}
@@ -279,7 +283,18 @@ async def live_preview(stream_id: int, file: str, request: Request, ctx: Context
     # during a lead-in the preview shows the slate, as an edge would see it
     if row.status not in (StreamStatus.RUNNING, StreamStatus.LEAD_IN, StreamStatus.WAITING_FOR_VIEWER):
         raise HTTPException(409, "The stream is not live.")
-    url = f"{ctx.settings.mediamtx_hls_url.rstrip('/')}/{row.name}/{file}"
+    path = row.name
+    if row.output_mode == "copy" and ctx.live_previews is not None:
+        # Sent to edges as-is: if browsers can't play that codec (H.265), the preview reads its own
+        # small H.264 path instead, made only while someone watches (the edges' stream is untouched).
+        with ctx.db.session() as s:
+            v = s.get(Video, row.video_id) if row.video_id else None
+        if v is not None and (v.video_codec or "").lower() != "h264":
+            try:
+                path = await ctx.live_previews.ensure(row.name)
+            except RuntimeError as exc:
+                raise HTTPException(503, str(exc))
+    url = f"{ctx.settings.mediamtx_hls_url.rstrip('/')}/{path}/{file}"
     if file.endswith(".m3u8"):  # count distinct dashboard viewers of this preview
         client = f"{request.client.host if request.client else '?'}|{request.headers.get('user-agent', '')[:120]}"
         ctx.mediamtx.note_preview(row.name, client)
@@ -306,7 +321,7 @@ async def snapshot(stream_id: int, ctx: Context = Depends(get_ctx), _: User = De
     async with _snapshot_sem:
         try:
             data = await asyncio.to_thread(grab_frame_jpeg, ctx.settings.ffmpeg_bin,
-                                           ctx.settings.publish_url(row.name), None, 640, 20.0, True)
+                                           ctx.settings.internal_read_url(row.name), None, 640, 20.0, True)
         except ProbeError as exc:
             raise HTTPException(503, f"Could not read a frame from the RTSP stream: {exc}")
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

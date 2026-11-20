@@ -73,9 +73,12 @@ moq: no
 ###############################################################################
 # HLS: browsers cannot play RTSP, so the dashboard's live preview uses HLS.
 # Bound to loopback; the backend proxies it behind the dashboard login, so no
-# extra port is exposed. Same H.264 as the RTSP stream (no re-encoding), and
-# only generated while someone is watching a preview.
+# extra port is exposed. Same H.264 as the RTSP stream (no re-encoding).
+# hlsAlwaysRemux: the HLS segments are kept ready for every path, so a preview
+# starts at once (about 0.1 s instead of ~5 s for the first 3 segments). Only a
+# remux (no encoding): about 17 MB of memory per stream, negligible CPU.
 hls: yes
+hlsAlwaysRemux: yes
 hlsAddress: 127.0.0.1:8888
 hlsVariant: fmp4
 hlsSegmentCount: 7

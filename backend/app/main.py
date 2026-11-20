@@ -38,6 +38,7 @@ from .services.ffprobe_service import ffmpeg_version
 from .services.mediamtx_service import MediaMTXService
 from .services.recovery_service import RecoveryService
 from .services.stream_supervisor import StreamSupervisor
+from .services import naming_db
 from .services.system_monitor import SystemMonitor
 from .services.video_library import VideoLibrary
 
@@ -93,6 +94,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         removed = library.cleanup_stale_uploads()
         mtx = MediaMTXService(settings)
         sup = StreamSupervisor(settings, db, mtx, library, events)
+        # naming convention: every analytics has a WHAT code; uploads follow the live mode setting
+        naming_db.ensure_codes(db)
+        library.naming_mode = lambda: sup.limits.get_str("naming_mode") or settings.naming_mode
+        library.extra_copy_codecs = lambda: ("hevc",) if sup.limits.get_str("hevc_passthrough") == "on" else ()
         recovery = RecoveryService(sup)
         sysmon = SystemMonitor(settings)
         users = UserStore(settings.users_path)
@@ -103,6 +108,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ctx = app.state.ctx
         ctx.backups = BackupService(settings, events)
         ctx.health = HealthTester(ctx)
+        from .services.live_preview import LivePreviews
+        ctx.live_previews = LivePreviews(settings)
 
         if settings.auth_enabled and users.count() == 0:
             log.warning("Authentication is enabled but %s has no users; create one with "
@@ -118,6 +125,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mtx.start_monitor()
         sup.start_monitor()
         library.start_scanner()
+        # Before recovery: restarted transcoding streams must use the encoder that works here.
+        await asyncio.to_thread(sup.encoders.detect)
         recovery_task = asyncio.create_task(recovery.run(), name="recovery")
 
         async def warn_loop():
@@ -145,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await network.stop()
             await ctx.health.stop()
             await ctx.backups.stop()
+            await ctx.live_previews.stop()
             await mtx.stop()
             events.add("backend.stop", "backend stopped")
             alerts.close()
@@ -196,6 +206,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers.setdefault("Referrer-Policy", "same-origin")
         if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
             response.headers["Cache-Control"] = "no-store"
+        elif request.url.path.startswith("/assets/") and response.status_code == 200:
+            # Vite puts a content hash in every asset name: a new build means new names,
+            # so browsers may keep these forever (no re-check round trip on each page load).
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
     # Compress JSON and the dashboard's assets (the stream list is ~2 KB per stream,

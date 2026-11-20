@@ -3,6 +3,9 @@ import { api, ApiError, uploadVideo } from "../services/api";
 import { formatBytes, formatTime } from "../lib/format";
 import type { Video } from "../types/api";
 import { useToast } from "./common";
+import { NameFilesDialog, namingMode, useNaming } from "./Naming";
+import { findSameContent, quickHash } from "../lib/contentHash";
+import { useRig } from "../hooks/useRigData";
 import { CheckIcon, UploadIcon } from "./icons";
 
 /**
@@ -15,6 +18,8 @@ type ItemState = "queued" | "uploading" | "done" | "error" | "cancelled";
 interface Item {
   id: number;
   file: File;
+  /** name it gets in the library (naming convention); the file's own name is sent as original_name */
+  name: string;
   state: ItemState;
   loaded: number;
   started: number;
@@ -27,7 +32,8 @@ interface Item {
 interface UploadApi {
   /** Queue files; `onDone` runs for each finished file (e.g. attach it to a placeholder),
    * `onFail` when a file fails or is cancelled. */
-  enqueue: (files: File[], onDone?: (v: Video) => void | Promise<void>, onFail?: (message: string) => void) => void;
+  enqueue: (files: File[], onDone?: (v: Video) => void | Promise<void>, onFail?: (message: string) => void,
+    hint?: { what?: string }, onExisting?: (v: Video, file: File) => void) => void;
   /** Names of files still uploading or queued (to show a hint where they will appear). */
   pending: string[];
 }
@@ -48,12 +54,52 @@ export function UploadQueueProvider({ children, onUploaded }: { children: ReactN
 
   const patch = (id: number, p: Partial<Item>) => setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
 
-  const enqueue = useCallback((files: File[], onDone?: Item["onDone"], onFail?: Item["onFail"]) => {
-    const vids = files.filter(isVideoFile);
-    if (vids.length < files.length) toast("info", `Skipped ${files.length - vids.length} file(s) that are not videos.`);
-    setItems((xs) => [...xs, ...vids.map((file) => ({ id: nextId.current++, file, state: "queued" as const, loaded: 0,
-      started: 0, onDone, onFail }))]);
-  }, [toast]);
+  const naming = useNaming();
+  // files wait here while the person names them (WHAT_WHERE_NN), then join the queue
+  const [toName, setToName] = useState<{ files: File[]; onDone?: Item["onDone"]; onFail?: Item["onFail"]; what?: string } | null>(null);
+  const addToQueue = useCallback((files: File[], names: string[], onDone?: Item["onDone"], onFail?: Item["onFail"]) => {
+    setItems((xs) => [...xs, ...files.map((file, i) => ({ id: nextId.current++, file, name: names[i], state: "queued" as const,
+      loaded: 0, started: 0, onDone, onFail }))]);
+  }, []);
+  const { videos } = useRig();
+  const videosRef = useRef(videos);
+  videosRef.current = videos;
+  const enqueue = useCallback((files: File[], onDone?: Item["onDone"], onFail?: Item["onFail"], hint?: { what?: string },
+    onExisting?: (v: Video, file: File) => void) => {
+    const picked = files.filter(isVideoFile);
+    if (picked.length < files.length) toast("info", `Skipped ${files.length - picked.length} file(s) that are not videos.`);
+    if (!picked.length) return;
+    (async () => {
+      // Duplicates by CONTENT (not name): the same fingerprint the server keeps for every video.
+      const vids: File[] = [];
+      const seen = new Map<string, string>();
+      for (const f of picked) {
+        let hash: string | null = null;
+        try { hash = await quickHash(f); } catch { /* unreadable here: the server still checks */ }
+        const same = hash ? findSameContent(f.size, hash, videosRef.current) : null;
+        if (same) {
+          if (onExisting) {
+            toast("info", `Duplicate video: '${f.name}' is already in the library as '${same.filename}'. Used that one instead of uploading it again.`);
+            onExisting(same, f);
+          } else {
+            toast("bad", `Duplicate video: '${f.name}' is already in the library as '${same.filename}' (same content). Not uploaded.`);
+            onFail?.("Duplicate video: already in the library.");
+          }
+          continue;
+        }
+        const key = hash ? `${f.size}:${hash}` : null;
+        if (key && seen.has(key)) {
+          toast("bad", `Duplicate video: '${f.name}' is the same video as '${seen.get(key)}' in this upload. Uploaded once.`);
+          continue;
+        }
+        if (key) seen.set(key, f.name);
+        vids.push(f);
+      }
+      if (!vids.length) return;
+      if (namingMode() === "off") addToQueue(vids, vids.map((f) => f.name), onDone, onFail);
+      else setToName({ files: vids, onDone, onFail, what: hint?.what });
+    })();
+  }, [toast, naming, addToQueue]);
 
   // Run the queue: one upload at a time, so each gets the full bandwidth.
   useEffect(() => {
@@ -64,13 +110,18 @@ export function UploadQueueProvider({ children, onUploaded }: { children: ReactN
     (async () => {
       patch(it.id, { state: "uploading", started: Date.now() });
       try {
-        const chk = await api.uploadCheck(it.file.name, it.file.size);
+        let hash: string | undefined;
+        try { hash = await quickHash(it.file); } catch { /* the server checks the content again after upload */ }
+        const chk = await api.uploadCheck(it.name, it.file.size, hash);
+        if (chk.duplicate_of) {
+          throw new ApiError(409, `Duplicate video: already in the library as '${chk.duplicate_of.rel_path}' (same content). Not uploaded.`);
+        }
         if (chk.exists) throw new ApiError(409, `A file named '${chk.filename}' is already in the library.`);
         if (!chk.ok) {
           throw new ApiError(507, `Not enough disk space on the server: needs ${formatBytes(chk.required)}, ` +
             `available ${formatBytes(chk.available)}.`);
         }
-        const { promise, abort } = uploadVideo(it.file, (loaded, _t, note) => patch(it.id, { loaded, note }));
+        const { promise, abort } = uploadVideo(it.file, (loaded, _t, note) => patch(it.id, { loaded, note }), it.name);
         abortRef.current = abort;
         const v = await promise;
         patch(it.id, { state: "done", loaded: it.file.size, note: undefined });
@@ -131,10 +182,15 @@ export function UploadQueueProvider({ children, onUploaded }: { children: ReactN
     return () => window.removeEventListener("beforeunload", h);
   }, [active]);
 
-  const pending = items.filter((x) => x.state === "uploading" || x.state === "queued").map((x) => x.file.name);
+  const pending = items.filter((x) => x.state === "uploading" || x.state === "queued").map((x) => x.name);
   return (
     <Ctx.Provider value={{ enqueue, pending }}>
       {children}
+      {toName && (
+        <NameFilesDialog files={toName.files} hintWhat={toName.what} mode={naming?.mode ?? "enforce"}
+          onCancel={() => { const t = toName; setToName(null); t.files.forEach(() => t.onFail?.("Upload cancelled.")); }}
+          onConfirm={(names) => { const t = toName; setToName(null); addToQueue(t.files, names, t.onDone, t.onFail); }} />
+      )}
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-brand/10 backdrop-blur-[1px]">
           <div className="rounded-2xl border-2 border-dashed border-brand bg-surface px-8 py-6 text-center shadow-lg">
@@ -173,8 +229,8 @@ function QueuePanel({ items, onCancel, onClear }: { items: Item[]; onCancel: (it
             return (
               <li key={it.id} className="px-3 py-2 text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-medium" title={it.file.name}>{it.file.name}</span>
-                  {it.state === "done" && <CheckIcon className="h-4 w-4 text-emerald-600" />}
+                  <span className="min-w-0 flex-1 truncate font-medium" title={it.name !== it.file.name ? `${it.name} (was ${it.file.name})` : it.name}>{it.name}</span>
+                  {it.state === "done" && <CheckIcon className="h-4 w-4 text-emerald-700" />}
                   {(it.state === "uploading" || it.state === "queued") && (
                     <button className="btn-ghost btn-xs" onClick={() => onCancel(it)}>Cancel</button>
                   )}

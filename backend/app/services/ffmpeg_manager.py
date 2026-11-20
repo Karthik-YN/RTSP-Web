@@ -42,6 +42,7 @@ from pathlib import Path
 import psutil
 
 from ..config import Settings
+from . import encoders
 from .shape import fit_filter
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,12 @@ class PublishPlan:
     out_width: int | None = None  # scale to exactly this size (standard output); None = keep
     out_height: int | None = None
     entries: int = 1
+    encoder: str = "cpu"  # live-transcode encoder (services/encoders.py); copy mode ignores it
+    # What the playlist names: a per-stream symlink to source_path, so renaming the video only
+    # re-points the link and the next loop (FFmpeg reopens the file per entry) follows it.
+    input_path: Path | None = None
+    # Server clock on every frame ("IST" | "UTC"); None = no clock. Only for transcoded streams.
+    clock_tz: str | None = None
 
     @property
     def period_s(self) -> float:
@@ -102,11 +109,28 @@ TS_EPSILON_S = 0.0005
 
 def render_playlist(plan: PublishPlan) -> str:
     inpoint = plan.inpoint_abs + TS_EPSILON_S if plan.inpoint_abs > 0 else 0.0
-    entry = f"file {ffconcat_quote(str(plan.source_path))}\ninpoint {inpoint:.6f}\n"
+    entry = f"file {ffconcat_quote(str(plan.input_path or plan.source_path))}\ninpoint {inpoint:.6f}\n"
     if plan.outpoint_abs is not None:
         entry += f"outpoint {plan.outpoint_abs - TS_EPSILON_S:.6f}\n"
     entry += f"duration {plan.duration_s:.6f}\n"
     return "ffconcat version 1.0\n" + entry * plan.entries
+
+
+def source_link(playlist_path: Path, source: Path) -> Path:
+    """The per-stream symlink a playlist reads the video through (next to the playlist)."""
+    return playlist_path.with_name(f"source{source.suffix.lower()}")
+
+
+def point_link(link: Path, target: Path) -> None:
+    """Make ``link`` a symlink to ``target``, atomically (readers see the old or the new target, never none)."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    tmp = link.with_name(link.name + ".tmp")
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    os.symlink(target, tmp)
+    os.replace(tmp, link)
 
 
 def write_playlist(plan: PublishPlan) -> None:
@@ -121,6 +145,7 @@ def build_command(plan: PublishPlan, settings: Settings) -> list[str]:
         settings.ffmpeg_bin, "-hide_banner", "-nostdin",
         "-loglevel", "level+info", "-nostats",
         "-progress", "pipe:1", "-stats_period", "1",
+        *(encoders.input_args(plan.encoder) if plan.output_mode == "transcode" else []),
         "-re",  # read input at native frame rate (1x)
         "-f", "concat", "-safe", "0", "-i", str(plan.playlist_path),
         "-map", "0:v:0",
@@ -136,30 +161,58 @@ def build_command(plan: PublishPlan, settings: Settings) -> list[str]:
     return args
 
 
+CLOCK_OFFSET = {"IST": 19800, "UTC": 0}
+
+
+def clock_text_file(plan: PublishPlan) -> Path:
+    return plan.playlist_path.parent / "clock.txt"
+
+
+def write_clock_text(plan: PublishPlan) -> None:
+    """The drawtext template (in a file: no filter-option escaping). pts = wall clock seconds at draw time."""
+    off = CLOCK_OFFSET.get(plan.clock_tz or "IST", 19800)
+    clock_text_file(plan).parent.mkdir(parents=True, exist_ok=True)
+    clock_text_file(plan).write_text(
+        "%{pts:gmtime:" + str(off) + r":%Y-%m-%d %H\:%M\:%S}.%{eif:mod(floor(t*1000),1000):d:3} " + (plan.clock_tz or "IST"))
+
+
+def clock_filter(plan: PublishPlan, settings: Settings) -> str:
+    h = plan.out_height or min(plan.height or 720, settings.transcode_max_height)
+    size = max(16, round(h / 24))
+    font = settings.slate_font or "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+    return (f"drawtext=fontfile={font}:textfile={clock_text_file(plan)}:x=w-tw-{size}:y={size}:fontsize={size}"
+            f":fontcolor=white:box=1:boxcolor=black@0.65:boxborderw={max(4, size // 4)}")
+
+
 def transcode_args(plan: PublishPlan, settings: Settings) -> list[str]:
     fps = plan.fps if plan.fps and plan.fps > 0 else 25.0
     gop = max(1, int(round(fps * settings.x264_gop_seconds)))
-    args = [
-        "-c:v", "libx264",
-        "-preset", settings.x264_preset,
-        "-tune", settings.x264_tune,
-        "-profile:v", settings.x264_profile,
-        "-pix_fmt", "yuv420p",  # 8-bit 4:2:0 (handles 10-bit / 4:2:2 / 4:4:4 inputs)
-        "-crf", str(settings.x264_crf),
-        "-maxrate", f"{settings.x264_maxrate_kbps}k",
-        "-bufsize", f"{settings.x264_maxrate_kbps * 2}k",
-        "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
-        # time-based keyframes stay regular even for variable frame rate input
-        "-force_key_frames", f"expr:gte(t,n_forced*{settings.x264_gop_seconds:g})",
-    ]
-    if settings.x264_threads > 0:
-        args += ["-threads", str(settings.x264_threads)]
+    args = encoders.encoder_args(plan.encoder, profile=settings.x264_profile, gop=gop,
+                                 gop_seconds=settings.x264_gop_seconds, maxrate_kbps=settings.x264_maxrate_kbps,
+                                 crf=settings.x264_crf, preset=settings.x264_preset, tune=settings.x264_tune,
+                                 threads=settings.x264_threads)
     w, h = plan.width or 0, plan.height or 0
     if plan.out_width and plan.out_height:
         args += ["-vf", fit_filter(plan.out_width, plan.out_height, "pad")]
     elif w > settings.transcode_max_width or h > settings.transcode_max_height:
         args += ["-vf", (f"scale=w={settings.transcode_max_width}:h={settings.transcode_max_height}"
                          ":force_original_aspect_ratio=decrease:force_divisible_by=2")]
+    if plan.clock_tz:
+        # Wall-clock time (ms) of the moment each frame is drawn: frames get the real time as timestamps for the
+        # drawtext, then timestamps restart from 0 (paced by -re, so playback timing is unchanged).
+        clock = clock_filter(plan, settings)
+        if "-vf" in args:
+            k = args.index("-vf") + 1
+            args[k] = f"setpts=RTCTIME/(TB*1000000),{args[k]},{clock},setpts=PTS-STARTPTS"
+        else:
+            args += ["-vf", f"setpts=RTCTIME/(TB*1000000),{clock},setpts=PTS-STARTPTS"]
+    up = encoders.upload_filter(plan.encoder)
+    if up:  # GPU encoders take frames in GPU memory: scale on the CPU, then upload
+        if "-vf" in args:
+            k = args.index("-vf") + 1
+            args[k] = f"{args[k]},{up}"
+        else:
+            args += ["-vf", up]
     if settings.output_fps_mode == "cfr":
         args += ["-fps_mode", "cfr", "-r", f"{fps:.6g}"]
     else:

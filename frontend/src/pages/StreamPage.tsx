@@ -4,10 +4,11 @@ import { usePolling } from "../hooks/usePolling";
 import { useRig } from "../hooks/useRigData";
 import { api, ApiError } from "../services/api";
 import { formatBitrate, formatBytes, formatTime, since } from "../lib/format";
-import type { StreamDetail } from "../types/api";
-import { Avatar, CopyButton, ErrorBox, Pill, Skeleton, Spinner, StatusBadge, useToast, WarnBox } from "../components/common";
+import type { ClockTz, StreamDetail } from "../types/api";
+import { Avatar, ConfirmDialog, CopyButton, ErrorBox, Pill, Skeleton, Spinner, StatusBadge, useToast, WarnBox } from "../components/common";
 import { LivePlayer } from "../components/LivePlayer";
-import { canControl, queueText, useStreamActions } from "../components/StreamsTable";
+import { canControl, FrameHealthChip, queueText, useStreamActions } from "../components/StreamsTable";
+import { frameHealth, readersTitle } from "../lib/edge";
 import { describeLeadIn, GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import { ChevronLeftIcon, ImageIcon, LockIcon, PlayIcon, RestartIcon, StopIcon, TrashIcon } from "../components/icons";
 import { useRtspAddress } from "../hooks/useRtspAddress";
@@ -70,6 +71,7 @@ export function StreamPage() {
             </div>
           )}
         </div>
+        <StatusStrip s={s} />
         <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm text-emerald-300 ring-1 ring-inset ring-white/10">
           <span className="flex-1 break-all">{addr.url(s.rtsp_url)}</span><CopyButton text={addr.url(s.rtsp_url)} label="Copy URL" />
         </div>
@@ -94,7 +96,7 @@ export function StreamPage() {
 
       <div className="flex gap-1 border-b border-line" role="tablist">
         {tabs.map(([t, label]) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} title={t === "viewers" ? readersTitle(s) : undefined}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${tab === t ? "border-brand text-brand" : "border-transparent text-muted hover:text-fg"}`}>
             {label}
           </button>
@@ -112,25 +114,33 @@ export function StreamPage() {
             )}
             <UptimeBar streamId={s.id} />
             <Panel title="Live status">
-              <KV k="Desired / actual" v={<>{s.desired_state} / {s.status}</>} />
+              {s.desired_state !== s.status && <KV k="Desired / actual" v={<>{s.desired_state} / {s.status}</>} />}
               <KV k="RTSP path ready" v={s.runtime.path_ready ? <Pill tone="ok">yes (confirmed by MediaMTX)</Pill> : <Pill tone="muted">no</Pill>} />
               <KV k="Running since" v={s.running_since ? `${new Date(s.running_since).toLocaleString()} (${since(s.running_since)})` : "–"} />
               <KV k="Playback position" v={s.runtime.playback_position_s !== null ? formatTime(s.runtime.playback_position_s) : "–"} />
               <KV k="Loops completed" v={s.playback_mode === "loop" ? <>{s.runtime.loop_count} <span className="text-xs text-subtle">(from published timestamps; period {formatTime(s.runtime.loop_period_s)})</span></> : "–"} />
               <KV k="Publisher" v={s.runtime.progress
-                ? <>{s.runtime.progress.fps.toFixed(1)} fps · speed {s.runtime.progress.speed ?? "–"}x · dropped {s.runtime.progress.drop_frames}</> : "–"} />
+                ? <>{s.runtime.progress.fps.toFixed(1)} fps · speed {s.runtime.progress.speed ?? "–"}x · dropped {s.runtime.progress.drop_frames}
+                  <FrameHealthChip h={frameHealth(s, s.video?.fps)} className="ml-2" /></> : "–"} />
               <KV k="Bitrate" v={s.runtime.ingest_bps != null
                 ? <>{formatBitrate(s.runtime.ingest_bps)} in · {formatBitrate(s.runtime.egress_bps)} out to {s.runtime.viewer_count} reader(s)</> : "–"} />
-              <KV k="Process" v={s.pid ? <>PID {s.pid}{s.runtime.process && <> · {s.runtime.process.cpu_percent.toFixed(0)}% CPU · {formatBytes(s.runtime.process.rss_bytes)}</>}</> : "–"} />
-              <KV k="Automatic restarts" v={s.restart_count} />
+              {s.restart_count > 0 && <KV k="Automatic restarts" v={s.restart_count} />}
             </Panel>
+            <details className="card group" data-testid="advanced">
+              <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold uppercase tracking-wide text-subtle hover:text-fg">
+                <span className="inline-block transition group-open:rotate-90">›</span> Advanced: configuration, process, lead-in, FFmpeg command
+              </summary>
+              <div className="space-y-4 border-t border-line p-4">
             <Panel title="Configuration">
               <KV k="Requested start / end" v={`${formatTime(s.start_offset_s)} / ${s.end_offset_s !== null ? formatTime(s.end_offset_s) : "end of file"}`} />
               <KV k="Effective (keyframes)" v={`${formatTime(s.effective_start_s)} → ${formatTime(s.effective_end_s)}`} />
               <KV k="Mode" v={`${s.playback_mode === "loop" ? "Loop" : "Play once"} · ${s.playback_speed}x · ${s.output_mode === "copy" ? "stream copy" : "H.264 transcode"}`} />
+              {rig.config.features?.includes("clock_overlay") && <KV k="Server clock" v={<ClockSwitch s={s} onSaved={refresh} />} />}
               <KV k="Lead-in" v={describeLeadIn(s)} />
               <KV k="Last change" v={`${rig.user.auth_enabled ? `${s.updated_by ?? "?"} · ` : ""}${new Date(s.updated_at).toLocaleString()}`} />
+              <KV k="Process" v={s.pid ? <>PID {s.pid}{s.runtime.process && <> · {s.runtime.process.cpu_percent.toFixed(0)}% CPU · {formatBytes(s.runtime.process.rss_bytes)}</>}</> : "–"} />
             </Panel>
+            {can && <LeadInPanel s={s} onSaved={refresh} />}
             <Panel title="FFmpeg command">
               {s.ffmpeg_command_text ? (
                 <div className="relative">
@@ -139,6 +149,8 @@ export function StreamPage() {
                 </div>
               ) : <p className="text-muted">Not started yet.</p>}
             </Panel>
+              </div>
+            </details>
           </div>
           <div className="space-y-4">
             <Panel title="RTSP check">
@@ -154,7 +166,6 @@ export function StreamPage() {
               </button>
             </Panel>
             <MetaPanel s={s} onSaved={refresh} />
-            {can && <LeadInPanel s={s} onSaved={refresh} />}
             {s.video && (
               <Panel title="Source video">
                 <KV k="File" v={`${s.video.rel_path} (${formatBytes(s.video.size_bytes)})`} />
@@ -264,7 +275,7 @@ function MetaPanel({ s, onSaved }: { s: StreamDetail; onSaved: () => void }) {
           <div><div className="font-medium">{s.owner ?? "unknown"}</div><div className="text-xs text-muted">created {new Date(s.created_at).toLocaleDateString()}</div></div>
         </div>
       )}
-      <label className="label" htmlFor="note">Note for colleagues</label>
+      <label className="sr-only" htmlFor="note">Note for colleagues</label>
       <textarea id="note" className="input min-h-[4rem]" placeholder="e.g. Client demo until 17:00, please don't stop"
         value={note} onChange={(e) => setNote(e.target.value)} disabled={!can} maxLength={500} />
       {can && (
@@ -315,6 +326,75 @@ function LeadInPanel({ s, onSaved }: { s: StreamDetail; onSaved: () => void }) {
         <span className="text-xs text-subtle">Applies at the next start or restart.</span>
       </div>
     </Panel>
+  );
+}
+
+/** Server clock on this stream: on/off and IST/UTC. Changing it restarts the stream (edges reconnect). */
+function ClockSwitch({ s, onSaved }: { s: StreamDetail; onSaved: () => void }) {
+  const { user } = useRig();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<{ clock: boolean; clock_tz: ClockTz } | null>(null);
+  const can = canControl(s, user);
+  const apply = async (c: { clock: boolean; clock_tz: ClockTz }) => {
+    setBusy(true);
+    try {
+      await api.update(s.id, s.version, c);
+      toast("ok", c.clock ? `Clock (${c.clock_tz}) on ${s.name}: the stream restarts with it.` : `Clock off on ${s.name}: sent as it is again.`);
+      onSaved();
+    } catch (e) { toast("bad", (e as ApiError).message); } finally { setBusy(false); setConfirm(null); }
+  };
+  const ask = (c: { clock: boolean; clock_tz: ClockTz }) => (s.status === "RUNNING" ? setConfirm(c) : apply(c));
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2" data-testid="clock-switch">
+      <span>{s.clock ? <>On · {s.clock_tz} <span className="text-xs text-muted">(re-encoded live)</span></> : "Off (sent as it is)"}</span>
+      {can && (s.clock ? (
+        <>
+          <button className="btn-secondary btn-xs" disabled={busy} onClick={() => ask({ clock: true, clock_tz: s.clock_tz === "IST" ? "UTC" : "IST" })}>
+            Switch to {s.clock_tz === "IST" ? "UTC" : "IST"}</button>
+          <button className="btn-secondary btn-xs" disabled={busy} onClick={() => ask({ clock: false, clock_tz: s.clock_tz ?? "IST" })}>Turn off</button>
+        </>
+      ) : (
+        <>
+          <button className="btn-secondary btn-xs" disabled={busy} onClick={() => ask({ clock: true, clock_tz: "IST" })}>Turn on (IST)</button>
+          <button className="btn-secondary btn-xs" disabled={busy} onClick={() => ask({ clock: true, clock_tz: "UTC" })}>Turn on (UTC)</button>
+        </>
+      ))}
+      {busy && <Spinner />}
+      {confirm && (
+        <ConfirmDialog title={confirm.clock ? `Clock (${confirm.clock_tz}) on ${s.name}?` : `Clock off on ${s.name}?`}
+          confirmLabel={confirm.clock ? "Turn on and restart" : "Turn off and restart"}
+          message={<>The stream restarts (about 2–5 s) and {s.runtime.viewer_count ? <b>{s.runtime.viewer_count} reader(s)</b> : "its readers"} reconnect.
+            {confirm.clock ? " With the clock it is re-encoded live: about 1–2 CPU cores at 720p, 4 at 1080p." : " Without it the video is sent as it is again."}</>}
+          onCancel={() => setConfirm(null)} onConfirm={() => apply(confirm)} />
+      )}
+    </span>
+  );
+}
+
+/** The numbers people check first, in one line: frames, readers, bitrate, output, uptime, problems. */
+function StatusStrip({ s }: { s: StreamDetail }) {
+  const rt = s.runtime;
+  const running = s.status === "RUNNING";
+  const cell = "flex flex-col gap-0.5 rounded-lg bg-surface-2 px-3 py-2 ring-1 ring-inset ring-line";
+  const k = "text-[11px] font-medium uppercase tracking-wide text-subtle";
+  const v = "text-sm font-semibold tabular-nums";
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="status-strip">
+      <div className={cell}><span className={k}>Frames</span>
+        <span className={v}>{running && rt.progress ? <>{rt.progress.fps.toFixed(1)} fps <FrameHealthChip h={frameHealth(s, s.video?.fps)} /></> : "–"}</span></div>
+      <div className={cell} title={readersTitle(s)}><span className={k}>Readers</span>
+        <span className={v}>{rt.viewer_count}{rt.preview_watchers > 0 && <span className="text-xs font-normal text-muted"> + {rt.preview_watchers} preview</span>}</span></div>
+      <div className={cell}><span className={k}>Bitrate</span>
+        <span className={v}>{running && rt.ingest_bps != null ? formatBitrate(rt.ingest_bps) : "–"}</span></div>
+      <div className={cell}><span className={k}>Output</span>
+        <span className={v}>{s.output_resolution ?? "–"} <span className="text-xs font-normal text-muted">{s.output_mode === "copy" ? "as-is" : "transcoded"}</span></span></div>
+      <div className={cell}><span className={k}>Up for</span>
+        <span className={v}>{running && s.running_since ? since(s.running_since) : "–"}</span></div>
+      <div className={cell} title={s.last_error ?? undefined}><span className={k}>Problems</span>
+        <span className={`${v} ${s.last_error || s.restart_count ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+          {s.last_error ? "error" : s.restart_count ? `${s.restart_count} restart${s.restart_count > 1 ? "s" : ""}` : "none"}</span></div>
+    </div>
   );
 }
 

@@ -9,8 +9,11 @@ const LEVEL: Record<string, string> = {
   INFO: "bg-slate-500/10 text-muted",
 };
 
-export function EventsPage() {
-  const { data, loading } = usePolling(() => api.events(300), 3000);
+/** `embedded`: shown as a tab of the System page (no page title). */
+export function EventsPage({ embedded = false }: { embedded?: boolean }) {
+  // newest 100 to start (was 300 every 3 s); older ones on request, up to the server's 1000
+  const [limit, setLimit] = useState(100);
+  const { data, loading } = usePolling(() => api.events(limit), 5000, [limit]);
   const [q, setQ] = useState("");
   const [level, setLevel] = useState<"all" | "problems">("all");
   const rows = (data ?? []).filter((e) =>
@@ -18,10 +21,12 @@ export function EventsPage() {
     (!q || `${e.kind} ${e.stream_name ?? ""} ${e.username ?? ""} ${e.message}`.toLowerCase().includes(q.toLowerCase())));
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Events</h1>
-        <p className="text-sm text-muted">Who did what, failures and recoveries (newest first).</p>
-      </div>
+      {embedded ? <p className="text-sm text-muted">Who did what, failures and recoveries (newest first).</p> : (
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Events</h1>
+          <p className="text-sm text-muted">Who did what, failures and recoveries (newest first).</p>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full max-w-xs">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-subtle" />
@@ -49,6 +54,11 @@ export function EventsPage() {
             ))}
             {rows.length === 0 && <li className="p-8 text-center text-sm text-muted">No events match.</li>}
           </ul>
+        )}
+        {data && data.length >= limit && limit < 1000 && (
+          <div className="border-t border-line p-2 text-center">
+            <button className="btn-secondary btn-xs" onClick={() => setLimit((l) => Math.min(1000, l + 200))}>Show older events</button>
+          </div>
         )}
       </div>
     </div>

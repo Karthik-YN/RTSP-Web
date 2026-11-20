@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from ..services.auth import User
 from ..services.runtime_settings import LIMITS
-from .deps import Context, current_user, get_ctx, require_operator
+from .deps import Context, current_user, get_ctx, require_admin, require_operator
 
 router = APIRouter(tags=["health"])
 
@@ -57,6 +57,32 @@ def set_capacity(body: CapacityIn, ctx: Context = Depends(get_ctx), user: User =
     if changes:
         ctx.events.add("settings.capacity", "capacity limits changed: " + ", ".join(changes), username=user.username)
     return _capacity(ctx)
+
+
+class CodecsIn(BaseModel):
+    hevc_passthrough: bool
+
+
+def _codecs(ctx: Context) -> dict:
+    return {"copy_codecs": list(ctx.settings.copy_codecs) + list(ctx.library.extra_copy_codecs()),
+            "hevc_passthrough": ctx.supervisor.limits.get_str("hevc_passthrough") == "on"}
+
+
+@router.get("/api/settings/codecs")
+def get_codecs(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
+    """Codecs sent to edges as they are (no transcoding)."""
+    return _codecs(ctx)
+
+
+@router.put("/api/settings/codecs")
+def set_codecs(body: CodecsIn, ctx: Context = Depends(get_ctx), user: User = Depends(require_admin)):
+    """H.265 pass-through: send H.265 videos to edges unchanged (only if the edges decode H.265).
+    Applies to streams started or changed after this; running streams keep their mode until restarted."""
+    ctx.supervisor.limits.set_str("hevc_passthrough", "on" if body.hevc_passthrough else None, user.username)
+    n = ctx.library.recheck_compat()
+    ctx.events.add("settings.codecs", f"H.265 pass-through {'on' if body.hevc_passthrough else 'off'} "
+                   f"({n} video(s) re-checked)", username=user.username)
+    return _codecs(ctx)
 
 
 @router.post("/api/backup")

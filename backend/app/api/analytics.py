@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from ..database import utcnow
 from ..models import Analytics, AnalyticsCategory, AnalyticsSlot, Stream, Video
 from ..schemas import TimeValue
+from ..services import naming
 from ..services.analytics_suggest import suggest
 from ..services.auth import User
 from ..services.errors import ServiceError
@@ -46,10 +47,15 @@ class CategoryPatch(BaseModel):
     sort: int | None = None
 
 
+_CODE_FIELD = Field(default=None, pattern=r"^[A-Z][A-Z0-9]{1,7}$",
+                    description="WHAT code in video names (naming convention), e.g. ALPR; chosen automatically if empty")
+
+
 class AnalyticsIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     category_id: int
     description: str | None = Field(default=None, max_length=2000)
+    code: str | None = _CODE_FIELD
 
 
 class AnalyticsPatch(BaseModel):
@@ -57,6 +63,7 @@ class AnalyticsPatch(BaseModel):
     category_id: int | None = None
     description: str | None = Field(default=None, max_length=2000)
     sort: int | None = None
+    code: str | None = _CODE_FIELD
 
 
 class SlotIn(BaseModel):
@@ -95,6 +102,8 @@ class RunIn(BaseModel):
     lead_in_mode: Literal["none", "fixed", "hold"] | None = None
     lead_in_s: float | None = Field(default=None, ge=0, le=120)
     hold_max_s: float | None = Field(default=None, gt=0, le=7 * 86400)
+    clock: bool = False  # server clock drawn on every frame (re-encodes each camera)
+    clock_tz: Literal["IST", "UTC"] = "IST"
 
 
 def slugify(name: str) -> str:
@@ -162,7 +171,7 @@ def tree(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
         rows = []
         for a in (x for x in items if x.category_id == c.id):
             mine = [st for st in streams if slot_owner.get(st.slot_id) == a.id]
-            rows.append({"id": a.id, "name": a.name, "description": a.description, "sort": a.sort,
+            rows.append({"id": a.id, "name": a.name, "code": a.code, "description": a.description, "sort": a.sort,
                          "slots": sum(1 for sl in slots if sl.analytics_id == a.id),
                          "videos": len({sl.video_id for sl in slots if sl.analytics_id == a.id and sl.video_id}),
                          "slot_ids": [sl.id for sl in slots if sl.analytics_id == a.id], **_counts(ctx, mine)})
@@ -321,7 +330,8 @@ async def run_slot(sid: int, body: RunIn, ctx: Context = Depends(get_ctx), user:
         taken = set(s.scalars(select(Stream.name)))
     names = next_names(prefix, taken, body.count)
     cfg = _cfg(SimpleNamespace(start=body.start, end=body.end, video_id=video_id, mode=body.mode,
-                               force_transcode=body.force_transcode, output_size=body.output_size),
+                               force_transcode=body.force_transcode, output_size=body.output_size,
+                               clock=body.clock, clock_tz=body.clock_tz),
                default_output=ctx.settings.output_default)
     created, errors = [], []
     for name in names:
@@ -344,11 +354,13 @@ def create_analytics(body: AnalyticsIn, ctx: Context = Depends(get_ctx), user: U
     with ctx.db.session() as s:
         _get(s, AnalyticsCategory, body.category_id, "Category")
         sort = (s.scalar(select(func.max(Analytics.sort)).where(Analytics.category_id == body.category_id)) or 0) + 1
+        taken = set(s.scalars(select(Analytics.code).where(Analytics.code.is_not(None))))
+        code = _check_code(body.code, taken) if body.code else naming.auto_code(body.name.strip(), taken)
         a = Analytics(name=body.name.strip(), category_id=body.category_id, description=body.description,
-                      sort=sort, created_at=utcnow())
+                      sort=sort, created_at=utcnow(), code=code)
         s.add(a)
         _commit_unique(s, "An analytics")
-        out = {"id": a.id, "name": a.name, "category_id": a.category_id, "description": a.description}
+        out = {"id": a.id, "name": a.name, "code": a.code, "category_id": a.category_id, "description": a.description}
     ctx.events.add("analytics.created", f"analytics '{out['name']}' created", username=user.username)
     return out
 
@@ -367,7 +379,7 @@ def detail(aid: int, ctx: Context = Depends(get_ctx), _: User = Depends(current_
         vids = {v.id: v for v in s.scalars(select(Video).where(Video.id.in_([sl.video_id for sl in slots
                                                                               if sl.video_id])))}
         copies = _copies_720p(s)
-        return {"id": a.id, "name": a.name, "description": a.description,
+        return {"id": a.id, "name": a.name, "code": a.code, "description": a.description,
                 "category": {"id": cat.id, "name": cat.name}, **_counts(ctx, streams),
                 "slots": [_slot_out(ctx, sl, vids.get(sl.video_id), [st for st in streams if st.slot_id == sl.id], proc,
                                     copies)
@@ -388,9 +400,24 @@ def update_analytics(aid: int, body: AnalyticsPatch, ctx: Context = Depends(get_
             a.description = body.description.strip() or None
         if body.sort is not None:
             a.sort = body.sort
+        if body.code is not None and body.code != a.code:
+            taken = set(s.scalars(select(Analytics.code).where(Analytics.code.is_not(None), Analytics.id != aid)))
+            a.code = _check_code(body.code, taken)
         _commit_unique(s, "An analytics")
-        return {"id": a.id, "name": a.name, "category_id": a.category_id, "description": a.description,
+        return {"id": a.id, "name": a.name, "code": a.code, "category_id": a.category_id, "description": a.description,
                 "sort": a.sort}
+
+
+def _check_code(code: str, taken: set[str]) -> str:
+    """A WHAT code a person typed: not MISC and not used by another analytics.
+
+    Changing a code does not rename existing videos (their names keep the old code); rename them in the library.
+    """
+    if code == naming.MISC:
+        raise HTTPException(422, "MISC is reserved for videos whose analytics is not decided yet.")
+    if code in taken:
+        raise HTTPException(409, f"The code {code} is already used by another analytics.")
+    return code
 
 
 @router.delete("/{aid}", status_code=204)

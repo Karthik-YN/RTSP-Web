@@ -1,0 +1,57 @@
+video_id,proposed_name,current_name,needs_input,duplicate_of,analytics,streams (R=running S=stopped),resolution,duration_s,notes
+27,ABANDON_backstore_01.mp4,Abandoned_sup_back_store_3.mp4,,,,Abandoned_supbs3(R),1920x1080,1640,
+2,ABANDON_bag_01.mp4,bag1.mp4,,,AbandonedObject,,768x544,24,
+25,ABANDON_saree-shop_01.mp4,Abandoned_saree_counter.mp4,,,,Abandoned_saree(R),1280x720,1369,
+68,ABANDON_tbd_01_4k.mp4,video2.mp4,yes,,AbandonedObject,abandonedobject-1(R),3840x2160,1797,where? 30 min clip
+32,ALPR_cam2_01_h264.mp4,ALPR_2_first5min_h264.mp4,,,,ALPR_2_first5min(R),1920x1080,300,
+76,ALPR_gate5_01.mp4,Secure_parking5.mp4,,boom_Secure_parking5.mp4; gate.mp4,VehicleALPR,vehiclealpr-3(R),1920x1080,357,
+19,ALPR_gate6_01.mp4,boom_Secure_parking6.mp4,,,,boom_6(R),1920x1080,659,
+12,ALPR_mlff-1_01.mp4,MLFF_1.mp4,,,,MLFF_1(S),1920x1080,1800,
+88,ALPR_mlff-5_01.mp4,MLFF_5.mp4,,,VehicleALPR,vehiclealpr-15(R),1920x1080,1800,
+11,ALPR_mlff-6_01.mp4,MLFF_6.mp4,,,,MLFF_6(S),1920x1080,1800,
+30,ALPR_mlff-6_01_h264.mp4,MLFF_6_h264.mp4,,,,MLFF_6_h264(R),1920x1080,1800,
+89,ALPR_mlff-7_01.mp4,MLFF_7.mp4,,,VehicleALPR,,3072x1728,3600,
+78,ALPR_tirupati_01.mp4,tirupathitest.mp4,,,VehicleALPR,vehiclealpr-10(R) vehiclealpr-11(R) vehiclealpr-12(R) vehiclealpr-13(R) vehiclealpr-14(R),1920x1080,180,
+84,ALPR_tirupati_02.mp4,Copy of tirupathi test bench.mp4,,,VehicleALPR,vehiclealpr-17(S),1920x1080,412,was 'Copy of tirupathi test bench'
+9,ALPR_tirupati_03_h264.mp4,tirupathi double rider coming toward camera h264.mp4,yes,,,,1920x1080,6,analytics? double rider
+83,ALPR_toll-s1_02.mp4,anpr_secure.mp4,,toll_s1_anpr_secure.mp4,VehicleALPR,vehiclealpr-8(R),1920x1080,900,
+14,ALPR_toll-s2_01.mp4,toll_s2_anpr_secure2.mp4,,anpr_secure2.mp4,,toll_s2(R),1280x720,900,
+75,ALPR_toll-s3_02.mp4,anpr_secure3.mp4,,toll_s3_anpr_secure3_complete.mp4,VehicleALPR,vehiclealpr-2(R),1280x720,900,
+26,ALPR_toll-s3_03_12fps.mp4,toll_s3_anpr_secure3_12fps.mp4,,,,toll_s3_recovery(S),1280x720,637,12 fps cut
+15,ALPR_toll-s4_01.mp4,toll_s4_anpr_secure4.mp4,,anpr_secure4.mp4,,toll_s4(R),1280x720,900,
+16,ALPR_toll-s5_01.mp4,toll_s5_anpr_secure5.mp4,,anpr_secure5.mp4,,toll_s5(R),1280x720,900,
+74,ALPR_toll-s6_02.mp4,anpr_secure6.mp4,,toll_s6_anpr_secure6.mp4,VehicleALPR,vehiclealpr-1(R),1280x720,900,
+79,ALPR_toll-s7_01.mp4,anpr_secure7.mp4,,,VehicleALPR,vehiclealpr-9(R),1280x720,900,
+8,ANPR_road_01.mp4,Traffic_ANPR.mp4,,,videoANPR,,1920x1080,463,
+10,CROWD_overcrowd_01_4k.mp4,Crowd_overcrowd.mp4,,,,Crowd_overcrowd(R),3840x2160,24,
+43,CROWD_overcrowd_02.mp4,overcrowd2.mp4,,,CrowdDensity,,1080x1920,22,portrait
+21,CROWD_railway_01_h264.mp4,Crowd_railway_h264.mp4,,,,Crowd_railway(R),1920x1080,31,
+5,CROWD_tbd_01.mp4,crowd2.mp4,yes,,CrowdDensity,,1080x1920,12,where? portrait
+44,CROWD_tbd_02.mp4,region3_clean.mp4,yes,,CrowdDensity,,768x432,8,where?
+39,EV_station_01.mp4,charging_station.mp4,,,Charging station,,2688x1520,226,
+70,FALL_lab_01.mp4,fall_two_rois_test.mp4,,,SlipAndFall,,1920x1080,12,
+69,FALL_lab_02.mp4,fall_two_rois_test_v2.mp4,,,SlipAndFall,slipandfall-1(R),1920x1080,13,
+72,FALL_office_01.avi,fall_office_room.avi,,,SlipAndFall,,320x240,27,
+73,FALL_office_01_h264.mp4,fall_office_room (h264).mp4,,,,,320x240,27,
+71,FALL_tbd_01.mp4,fall_on_camera_extended.mp4,yes,,SlipAndFall,slipandfall-2(R),1920x1080,6,where?
+24,FENCE_backstore_01.mp4,Fence_dep_back_store_2.mp4,,,,Fence_backstore2(R),1920x1080,486,
+1,FIRE_forest_01.mp4,Fire.mp4,,,FireSmoke,Fire(R),1920x1080,29,
+48,FIRE_ptz_01.mp4,camera_live_ptz_fire.mp4,,,FireSmoke,,1920x1080,163,
+47,JAM_dhaka_01_web.mp4,vidssave.com Incredible traffic jam in Dhanmondi_ Dhaka. 720P.mp4,,,TrafficCongestion,,1280x720,278,from the internet
+46,JAM_tbd_01_web.mp4,vidssave.com What do you think is the cause of this traffic jam_ 720P.mp4,yes,,TrafficCongestion,,1280x720,435,from the internet; where?
+45,MISC_collector_01.mp4,collector_90s.mp4,yes,,TrafficCongestion,,1920x1080,90,analytics?
+3,MISC_combined_01.mp4,combined.mp4,yes,,,,1920x1080,587,analytics?
+49,MISC_live_01.mp4,camera_live.mp4,yes,,FireSmoke,,1920x1080,9,analytics?
+50,MISC_ptz_01.mp4,camera_live_ptz.mp4,yes,,FireSmoke,,1920x1080,103,analytics?
+28,PARK_illegal_01.mp4,New_Illegal_Parking.mp4,,,,Parking_illegal(R),1920x1080,43,
+40,PARK_park1_01.mp4,cam_park1_2025-06-13_08-17-36.mp4,,,Parking,,1280x720,120,
+41,PARK_park1_02.mp4,cam_park1_2025-06-13_08-27-37.mp4,,,Parking,,1280x720,120,
+29,PARK_tbd_01.mp4,Parking_2.mp4,yes,,,Parking_2(R),1920x1080,597,where?
+6,PPE_tbd_01.mp4,PPE.mp4,yes,,,PPE(S),1920x1080,205,where?
+20,PPE_tbd_02.mp4,PPE_site_vid0825_3class.mp4,yes,,,PPE_site(R),720x480,60,where?
+22,REGION_coffeeshop_01.mp4,People_coffee_counter.mp4,yes,,,People_coffee(R),1920x1080,3310,analytics? REGION or LINE
+23,REGION_supermarket_01.mp4,People_sup_counter_5_6.mp4,yes,,,People_sup56(R),1920x1080,2153,analytics? REGION or LINE
+42,REGION_tbd_02.mp4,crowd3.mp4,yes,Region_crowd3.mp4,"CrowdDensity, RegionCount",regioncount-1(R),768x432,16,where?
+86,TRIG_4wheeler_01.mp4,4wheeler_16_9_clipped.mp4,,,Trigger line videos,trigger-line-videos-1(R),1920x1080,338,
+87,TRIG_cybertronics_01.mp4,Cybertronics Utopia_2wheelers_videos_clipped.mp4,,,Trigger line videos,trigger-line-videos-3(R),1920x1080,477,
+85,TRIG_toll-s1_01.mp4,anpr_secure_clipped.mp4,,,Trigger line videos,trigger-line-videos-2(R),1920x1080,168,

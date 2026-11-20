@@ -18,6 +18,11 @@ ENV DEBIAN_FRONTEND=noninteractive PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core curl ca-certificates tini >/dev/null \
+ && if [ "$(dpkg --print-architecture)" = amd64 ]; then \
+      # GPU video drivers (used only when a GPU is passed in: docker-compose.gpu-*.yml).
+      # Intel iGPU (Broadwell and newer + older), AMD via Mesa. NVIDIA's comes from the NVIDIA runtime.
+      apt-get install -y -qq --no-install-recommends intel-media-va-driver i965-va-driver mesa-va-drivers \
+        vainfo >/dev/null; fi \
  && rm -rf /var/lib/apt/lists/*
 # MediaMTX: pinned release, verified against the release's own checksum file.
 RUN set -eu; arch=$(dpkg --print-architecture); \

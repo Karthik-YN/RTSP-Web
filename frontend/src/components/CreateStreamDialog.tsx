@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type StreamInput } from "../services/api";
 import { formatDuration, formatTime, parseTime, suggestName, validateName } from "../lib/format";
-import type { AppConfig, OutputConfig, Stream, ValidateResult, Video } from "../types/api";
+import type { AppConfig, ClockTz, OutputConfig, Stream, ValidateResult, Video } from "../types/api";
 import { LivePlayer } from "./LivePlayer";
 import { CopyButton, ErrorBox, Modal, Pill, Spinner, WarnBox } from "./common";
 import { leadInBody, leadInError, LeadInFields, type LeadInValue } from "./LeadIn";
 import { useRtspAddress } from "../hooks/useRtspAddress";
+import { useSystemMaybe } from "../hooks/useRigData";
 
 export interface StreamTemplate {
   videoId: number; name?: string; start?: string; end?: string; mode?: "loop" | "once"; forceTranscode?: boolean;
+  clock?: boolean; clockTz?: ClockTz;
 }
 
 /**
@@ -54,7 +56,44 @@ export function outputPlan(v: Video | null, size: string, out?: OutputConfig): "
   return "live";
 }
 
-/** Output size of a new stream: the standard 16:9 size (default), the original, or (admins) another size. */
+/**
+ * Explicit choice when creating a stream: draw the rig's clock (wall-clock time with milliseconds, IST or UTC) on
+ * every frame, to compare with the receiver's clock (latency) and line up events. Off by default: it re-encodes.
+ */
+export function ClockField({ config, value, tz, onChange, idPrefix }: {
+  config: AppConfig | null | undefined; value: boolean; tz: ClockTz; onChange: (on: boolean, tz: ClockTz) => void; idPrefix: string;
+}) {
+  const system = useSystemMaybe();
+  if (!config?.features?.includes("clock_overlay")) return null; // older server
+  const cap = system?.streams;
+  return (
+    <div className="rounded-lg bg-surface-2 p-3 ring-1 ring-inset ring-line" data-testid="clock-field">
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={value} onChange={(e) => onChange(e.target.checked, tz)}
+          aria-describedby={`${idPrefix}-clock-help`} />
+        <span><b>Server clock in picture</b> — the rig's time with milliseconds, burned into every frame (top right)</span>
+      </label>
+      {value && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pl-6 text-sm" role="radiogroup" aria-label="Clock time zone">
+          {(["IST", "UTC"] as const).map((z) => (
+            <label key={z} className="flex items-center gap-1.5">
+              <input type="radio" name={`${idPrefix}-clock-tz`} checked={tz === z} onChange={() => onChange(true, z)} />
+              {z === "IST" ? "IST (India, UTC+5:30)" : "UTC"}
+            </label>
+          ))}
+        </div>
+      )}
+      <p id={`${idPrefix}-clock-help`} className="mt-1 pl-6 text-xs text-muted">
+        {value
+          ? <>Re-encodes this stream live: about 1–2 CPU cores at 720p, 4 at 1080p. It counts toward the transcode limit
+            {cap ? <> ({cap.transcoding} of {cap.max_transcode} in use)</> : null}. Use it only on streams that need it.</>
+          : "Off: the video is sent as it is (no CPU). Turn on for latency tests or to line up events with frames."}
+      </p>
+    </div>
+  );
+}
+
+/** Output size of a new stream: the same as the file (default: no scaling), the standard 16:9 size, or (admins) another size. */
 export function OutputSizeField({ out, video, value, onChange, isAdmin, idPrefix }: {
   out?: OutputConfig; video: Video | null; value: string; onChange: (v: string) => void; isAdmin: boolean; idPrefix: string;
 }) {
@@ -68,12 +107,12 @@ export function OutputSizeField({ out, video, value, onChange, isAdmin, idPrefix
       <span className="label">Output size</span>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
         <label className="flex items-center gap-1.5">
-          <input type="radio" name={`${idPrefix}-out`} checked={value === "standard"} onChange={() => onChange("standard")} />
-          Standard {out.width}×{out.height}
+          <input type="radio" name={`${idPrefix}-out`} checked={value === "original"} onChange={() => onChange("original")} />
+          Same as the file{orig && ` (${orig})`}
         </label>
         <label className="flex items-center gap-1.5">
-          <input type="radio" name={`${idPrefix}-out`} checked={value === "original"} onChange={() => onChange("original")} />
-          Original{orig && ` (${orig})`}
+          <input type="radio" name={`${idPrefix}-out`} checked={value === "standard"} onChange={() => onChange("standard")} />
+          {out.width}×{out.height}
         </label>
         {isAdmin && extra.length > 0 && (
           <select className="input h-8 w-auto py-1 text-sm" aria-label="Other output size"
@@ -108,7 +147,8 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
   const [end, setEnd] = useState(template?.end ?? "");
   const [mode, setMode] = useState<"loop" | "once">(template?.mode ?? "loop");
   const [forceTranscode, setForceTranscode] = useState(template?.forceTranscode ?? false);
-  const [outputSize, setOutputSize] = useState<string>(config.output?.default ?? "original");
+  const [outputSize, setOutputSize] = useState<string>("original"); // same size as the file: no scaling unless asked
+  const [clock, setClock] = useState<{ on: boolean; tz: ClockTz }>({ on: template?.clock ?? false, tz: template?.clockTz ?? "IST" });
   const [lead, setLead] = useState<LeadInValue>({
     mode: config.default_lead_in_mode ?? "fixed", seconds: config.default_lead_in_s ?? 5, holdMax: null });
   const [slider, setSlider] = useState(0);
@@ -140,6 +180,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
   const body: StreamInput | null = video ? {
     name, video_id: video.id, start: start.trim() || null, end: end.trim() || null, mode,
     force_transcode: forceTranscode, output_size: outputSize,
+    ...(config.features?.includes("clock_overlay") ? { clock: clock.on, clock_tz: clock.tz } : {}),
   } : null;
 
   // debounced server-side dry run (keyframe alignment, codec decision, warnings)
@@ -161,7 +202,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoId, name, start, end, mode, forceTranscode, outputSize, rangeError]);
+  }, [videoId, name, start, end, mode, forceTranscode, outputSize, rangeError, clock.on, clock.tz]);
 
   const serverErrors = server?.errors ?? [];
   const canSubmit = !!body && !nameError && !rangeError && !submitting && server?.ok === true
@@ -286,6 +327,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
               isAdmin={!!isAdmin} idPrefix="create" />
             {outputPlan(video, outputSize, config.output) !== "live" &&
               <FastStartNotice video={video} checked={forceTranscode} onChange={setForceTranscode} />}
+            <ClockField config={config} value={clock.on} tz={clock.tz} onChange={(on, tz) => setClock({ on, tz })} idPrefix="create" />
           </div>
 
           <div className="md:col-span-2">

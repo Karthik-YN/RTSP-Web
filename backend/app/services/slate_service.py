@@ -1,6 +1,6 @@
 """Per-stream lead-in slates.
 
-A slate is a short H.264 MP4 that MediaMTX loops on a stream's URL until the
+A slate is a short H.264 MP4 (H.265 for streams sent as H.265) that MediaMTX loops on a stream's URL until the
 video starts ("always available" path, see docs/SPIKE_LEADIN.md). It is
 black with the stream name and a running clock, so two cameras never send
 identical frames (the edge would discard them as duplicates). FFmpeg builds
@@ -45,10 +45,11 @@ class SlateSpec:
     fps_text: str  # e.g. "25/1", "30000/1001"
     profile: str  # baseline | main | high
     scale_vf: str | None = None  # transcoded streams: the publisher's scale filter
+    codec: str = "h264"  # h264 | hevc: the slate uses the codec the video is sent in (H.265 pass-through)
 
     def key(self, seconds: int) -> str:
         raw = "|".join(map(str, (SLATE_VERSION, self.name, self.width, self.height, self.fps_text, self.profile,
-                                 self.scale_vf, seconds)))
+                                 self.scale_vf, seconds) + ((self.codec,) if self.codec != "h264" else ())))
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
@@ -92,9 +93,14 @@ def slate_command(spec: SlateSpec, out: Path, seconds: int, drawtext: bool, sett
             "-f", "lavfi", "-i", slate_graph(spec, drawtext, settings.slate_font), "-t", str(seconds)]
     if spec.scale_vf:
         args += ["-vf", spec.scale_vf]
-    args += ["-c:v", "libx264", "-preset", "veryfast", "-profile:v", spec.profile, "-pix_fmt", "yuv420p",
-             "-g", str(g), "-keyint_min", str(g), "-sc_threshold", "0", "-an",
-             "-movflags", "+faststart", "-f", "mp4", str(out)]
+    if spec.codec == "hevc":
+        # MediaMTX keeps the slate's format for the path: an H.265 video needs an H.265 slate
+        args += ["-c:v", "libx265", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+                 "-x265-params", f"keyint={g}:min-keyint={g}:bframes=0:scenecut=0:log-level=error"]
+    else:
+        args += ["-c:v", "libx264", "-preset", "veryfast", "-profile:v", spec.profile, "-pix_fmt", "yuv420p",
+                 "-g", str(g), "-keyint_min", str(g), "-sc_threshold", "0"]
+    args += ["-an", "-movflags", "+faststart", "-f", "mp4", str(out)]
     return args
 
 
