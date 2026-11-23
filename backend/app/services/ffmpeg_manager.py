@@ -273,6 +273,15 @@ class Progress:
         upd = p.get("updated_at")
         self.updated_at = datetime.fromisoformat(upd) if upd else datetime.now(timezone.utc)
 
+    def out_time_now(self, now: datetime | None = None, max_ahead_s: float = 1.5) -> float:
+        """Output time right now: FFmpeg reports progress once per second (``-stats_period 1``), so the
+        last report is up to ~1 s old. Extrapolate at real-time pace (publishers run with ``-re``),
+        capped so a stalled publisher does not run ahead. Used only for the shown playback position."""
+        if self.updated_at is None:
+            return self.out_time_s
+        age = ((now or datetime.now(timezone.utc)) - self.updated_at).total_seconds()
+        return self.out_time_s + min(max(age, 0.0), max_ahead_s)
+
     def loops_completed(self, period_s: float) -> int:
         if period_s <= 0:
             return 0

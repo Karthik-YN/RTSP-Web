@@ -15,8 +15,9 @@ import { queueText, StreamsTable } from "../components/StreamsTable";
 import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import { videoProblems } from "../lib/libraryFilters";
 import { blockedShape, ClockField, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
+import { Section, Segmented, videoChips } from "../components/FormParts";
 import {
-  CameraIcon, CopyIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, SearchIcon, StopIcon, TrashIcon, UploadIcon,
+  CameraIcon, ChevronIcon, CopyIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, SearchIcon, StopIcon, TrashIcon, UploadIcon,
 } from "../components/icons";
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "camera";
@@ -694,76 +695,114 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
     );
   }
 
+  const blocked = blockedShape(video, config?.output);
+  const canRun = !busy && !countErr && !startErr && !endErr && !prefixErr;
+  const why = countErr ? "Check the number of cameras" : prefixErr ? "Check the name prefix"
+    : startErr || endErr ? "Check the start / end time" : null;
+  const footer = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <p aria-live="polite" className={`mr-auto min-w-0 truncate text-sm ${why ? "text-red-600 dark:text-red-400" : "text-muted"}`}>
+        {why ?? `${count} stream${count > 1 ? "s" : ""}${startNow ? ", starting at once" : ", not started yet"}`}
+      </p>
+      <button className="btn-secondary" onClick={onClose}>Cancel</button>
+      <button className="btn-primary" disabled={!canRun} onClick={run}>
+        {busy ? <Spinner /> : <CameraIcon />} Create {count} stream{count > 1 ? "s" : ""}
+      </button>
+    </div>
+  );
+
   return (
-    <Modal title={`New stream from '${slot.title}'`} onClose={onClose}>
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 rounded-lg bg-surface-2 p-2 text-sm">
-          <div className="h-10 w-16 shrink-0 overflow-hidden rounded bg-slate-900">
-            {video.thumbnail_url && <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate font-medium">{video.filename}</div>
-            <div className="text-xs text-muted">{formatTime(video.duration_s, false)} · {video.width}×{video.height}</div>
-          </div>
+    <Modal title={`New stream from '${slot.title}'`} subtitle={analyticsName} onClose={onClose} wide footer={footer}>
+      <div className="grid gap-x-7 gap-y-6 md:grid-cols-[minmax(0,1fr)_16rem]">
+        <div className="min-w-0 space-y-7">
+          <Section title="Cameras">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-count">Number of cameras</label>
+                <input id="run-count" type="number" min={1} max={20} className={`input ${countErr ? "input-error" : ""}`}
+                  value={countText} onChange={(e) => setCountText(e.target.value)} />
+                <p className={`mt-1 text-xs ${countErr ? "text-red-600" : "text-muted"}`}>
+                  {countErr ?? (room !== null ? `Room for ${Math.max(0, room)} more running stream(s) on this server.` : "1 to 20")}
+                </p>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-prefix">Name prefix</label>
+                <input id="run-prefix" className={`input font-mono ${prefixErr ? "input-error" : ""}`} value={prefix}
+                  onChange={(e) => setPrefix(e.target.value)} autoComplete="off" spellCheck={false} />
+                <p className={`mt-1 text-xs ${prefixErr ? "text-red-600" : "text-muted"}`}>{prefixErr ?? "Streams are named prefix-1, prefix-2, …"}</p>
+              </div>
+            </div>
+          </Section>
+
+          <Section title="What plays" aside={`File length ${formatTime(video.duration_s, false)}`}>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-start">Start at (optional)</label>
+                <input id="run-start" className={`input font-mono ${startErr ? "input-error" : ""}`} value={start}
+                  onChange={(e) => setStart(e.target.value)} placeholder="00:00:00" />
+                <p className={`mt-1 text-xs ${startErr ? "text-red-600" : "text-muted"}`}>{startErr ?? "from the beginning if empty"}</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-end">End at (optional)</label>
+                <input id="run-end" className={`input font-mono ${endErr ? "input-error" : ""}`} value={end}
+                  onChange={(e) => setEnd(e.target.value)} placeholder="end of video" />
+                <p className={`mt-1 text-xs ${endErr ? "text-red-600" : "text-muted"}`}>{endErr ?? "to the end if empty"}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Segmented name="run-mode" ariaLabel="Playback" value={mode} onChange={setMode}
+                options={[{ value: "loop", label: "Loop forever" }, { value: "once", label: "Play once" }]} />
+              <label className="ml-auto flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} /> Start now
+              </label>
+            </div>
+          </Section>
+
+          <Section title="Output">
+            {blocked && (
+              <WarnBox>This video is {SHAPE_TEXT[video.shape ?? "other"]}, not 16:9, so it can't be streamed. Make a 16:9 copy
+                in the shared library (blurred bars, black bars or crop), then add the copy to this analytics.</WarnBox>
+            )}
+            <OutputSizeField out={config?.output} video={video} value={outputSize} onChange={setOutputSize}
+              isAdmin={!!user?.is_admin} idPrefix="run" />
+            {outputPlan(video, outputSize, config?.output) !== "live" &&
+              <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />}
+            <ClockField config={config} value={clock.on} tz={clock.tz} onChange={(on, tz) => setClock({ on, tz })} idPrefix="run" />
+          </Section>
+
+          <details className="group rounded-lg ring-1 ring-inset ring-line [&_summary::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2.5 text-sm hover:bg-surface-2">
+              <ChevronIcon className="h-4 w-4 text-muted transition-transform group-open:rotate-90" />
+              <span className="font-medium text-fg">Advanced</span>
+              <span className="truncate text-xs text-muted">Lead-in: {lead.mode === "none" ? "none"
+                : lead.mode === "hold" ? `until a viewer, then ${lead.seconds} s` : `${lead.seconds} s slate`}</span>
+            </summary>
+            <div className="border-t border-line px-3 py-3">
+              <div className="mb-1 text-sm font-medium text-fg">Lead-in (before the video)</div>
+              <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
+            </div>
+          </details>
+          {err && <ErrorBox>{err}</ErrorBox>}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+
+        <aside aria-label="Summary" className="min-w-0 space-y-4 md:sticky md:top-4 md:self-start">
+          <div className="overflow-hidden rounded-lg ring-1 ring-inset ring-line">
+            <div className="flex aspect-video items-center justify-center bg-slate-900">
+              {video.thumbnail_url ? <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                : <span className="text-xs text-slate-400">no picture</span>}
+            </div>
+            <div className="space-y-1.5 p-2.5">
+              <div className="truncate text-sm font-medium" title={video.filename}>{video.filename}</div>
+              <div className="flex flex-wrap gap-1">{videoChips(video, blocked ? "not 16:9" : null)}</div>
+            </div>
+          </div>
           <div>
-            <label className="label" htmlFor="run-count">Number of cameras</label>
-            <input id="run-count" type="number" min={1} max={20} className={`input ${countErr ? "input-error" : ""}`}
-              value={countText} onChange={(e) => setCountText(e.target.value)} />
-            {countErr && <p className="mt-1 text-xs text-red-600">{countErr}</p>}
-            {room !== null && <p className="mt-1 text-xs text-muted">Room for {Math.max(0, room)} more running stream(s) on this server.</p>}
+            <h3 className="mb-1.5 text-sm font-semibold text-fg">Streams to create</h3>
+            <div className="flex flex-wrap gap-1">
+              {names.map((n) => <span key={n} className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs ring-1 ring-inset ring-line">{n}</span>)}
+            </div>
           </div>
-          <div>
-            <label className="label" htmlFor="run-prefix">Name prefix</label>
-            <input id="run-prefix" className={`input font-mono ${prefixErr ? "input-error" : ""}`} value={prefix}
-              onChange={(e) => setPrefix(e.target.value)} />
-            {prefixErr && <p className="mt-1 text-xs text-red-600">{prefixErr}</p>}
-          </div>
-          <div>
-            <label className="label" htmlFor="run-start">Start at (optional)</label>
-            <input id="run-start" className={`input font-mono ${startErr ? "input-error" : ""}`} value={start}
-              onChange={(e) => setStart(e.target.value)} placeholder="00:00:00" />
-            {startErr && <p className="mt-1 text-xs text-red-600">{startErr}</p>}
-          </div>
-          <div>
-            <label className="label" htmlFor="run-end">End at (optional)</label>
-            <input id="run-end" className={`input font-mono ${endErr ? "input-error" : ""}`} value={end}
-              onChange={(e) => setEnd(e.target.value)} placeholder="end of video" />
-            {endErr && <p className="mt-1 text-xs text-red-600">{endErr}</p>}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex items-center gap-2"><input type="radio" checked={mode === "loop"} onChange={() => setMode("loop")} /> Loop forever</label>
-          <label className="flex items-center gap-2"><input type="radio" checked={mode === "once"} onChange={() => setMode("once")} /> Play once</label>
-          <label className="ml-auto flex items-center gap-2"><input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} /> Start now</label>
-        </div>
-        <div>
-          <span className="label">Lead-in (before the video)</span>
-          <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
-        </div>
-        {blockedShape(video, config?.output) && (
-          <WarnBox>This video is {SHAPE_TEXT[video.shape ?? "other"]}, not 16:9, so it can't be streamed. Make a 16:9 copy
-            in the shared library (blurred bars, black bars or crop), then add the copy to this analytics.</WarnBox>
-        )}
-        <OutputSizeField out={config?.output} video={video} value={outputSize} onChange={setOutputSize}
-          isAdmin={!!user?.is_admin} idPrefix="run" />
-        {outputPlan(video, outputSize, config?.output) !== "live" &&
-          <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />}
-        <ClockField config={config} value={clock.on} tz={clock.tz} onChange={(on, tz) => setClock({ on, tz })} idPrefix="run" />
-        <div>
-          <div className="label">Streams to create</div>
-          <div className="flex flex-wrap gap-1">
-            {names.map((n) => <span key={n} className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">{n}</span>)}
-          </div>
-        </div>
-        {err && <ErrorBox>{err}</ErrorBox>}
-        <div className="flex justify-end gap-2">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={busy || !!countErr || !!startErr || !!endErr || !!prefixErr} onClick={run}>
-            {busy ? <Spinner /> : <CameraIcon />} Create {count} stream{count > 1 ? "s" : ""}
-          </button>
-        </div>
+        </aside>
       </div>
     </Modal>
   );

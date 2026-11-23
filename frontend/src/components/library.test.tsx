@@ -81,7 +81,7 @@ describe("16:9 and standard output", () => {
     const { rerender } = render(<OutputSizeField out={out} video={wide} value="standard" onChange={onChange} isAdmin={false} idPrefix="t" />);
     expect(screen.getByTestId("output-plan")).toHaveTextContent("Scaled live");
     expect(screen.queryByLabelText("Other output size")).toBeNull();
-    await userEvent.setup().click(screen.getByLabelText(/Same as the file \(1920×1080\)/));
+    await userEvent.setup().click(screen.getByRole("radio", { name: /Same as the file \(1920×1080\)/ }));
     expect(onChange).toHaveBeenCalledWith("original");
     rerender(<OutputSizeField out={out} video={{ ...wide, copy_720p_id: 3 }} value="standard" onChange={onChange} isAdmin idPrefix="t" />);
     expect(screen.getByTestId("output-plan")).toHaveTextContent("720p copy");

@@ -45,3 +45,11 @@
   }
   .skeleton::after { content: ""; @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/5; animation: shimmer 1.4s infinite; }
 }
+
+/* Touch screens (phones, tablets): finger-sized targets (~40 px) without changing the desktop look. */
+@media (pointer: coarse) {
+  .btn, .btn-xs { min-height: 2.5rem; }
+  .btn-xs { padding-left: 0.75rem; padding-right: 0.75rem; }
+  input[type="checkbox"], input[type="radio"] { min-width: 1.25rem; min-height: 1.25rem; }
+  [role="menuitem"] { min-height: 2.75rem; }
+}

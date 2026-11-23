@@ -3,9 +3,15 @@ import { createPortal } from "react-dom";
 import type { StreamStatus } from "../types/api";
 
 // ------------------------------------------------------------------ Modal
-export function Modal({ title, onClose, children, wide = false }: {
+export function Modal({ title, onClose, children, wide = false, size, footer, subtitle }: {
   title: string; onClose: () => void; children: ReactNode; wide?: boolean;
+  /** "xl": two-pane forms (form + summary). Default: "wide" when wide, else a narrow card. */
+  size?: "md" | "wide" | "xl";
+  /** Action bar kept in view at the bottom while the dialog scrolls. */
+  footer?: ReactNode;
+  subtitle?: ReactNode;
 }) {
+  const width = { md: "max-w-lg", wide: "max-w-4xl", xl: "max-w-6xl" }[size ?? (wide ? "wide" : "md")];
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -18,12 +24,20 @@ export function Modal({ title, onClose, children, wide = false }: {
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/50 backdrop-blur-sm sm:p-4 sm:pt-12"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div role="dialog" aria-label={title}
-        className={`card min-h-full w-full p-0 shadow-pop max-sm:rounded-none max-sm:border-0 sm:min-h-0 ${wide ? "max-w-4xl" : "max-w-lg"}`}>
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-3 sm:static sm:rounded-t-xl sm:px-5">
-          <h2 className="min-w-0 truncate text-base font-semibold" title={title}>{title}</h2>
+        className={`card flex min-h-full w-full flex-col p-0 shadow-pop max-sm:rounded-none max-sm:border-0 sm:min-h-0 ${width}`}>
+        <div className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-3 sm:static sm:rounded-t-xl sm:px-5">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-semibold" title={title}>{title}</h2>
+            {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
+          </div>
           <button className="btn-ghost btn-xs shrink-0 max-sm:h-9 max-sm:w-9" onClick={onClose} aria-label="Close">✕</button>
         </div>
-        <div className="p-4 sm:p-5">{children}</div>
+        <div className="flex-1 p-4 sm:p-5">{children}</div>
+        {footer && (
+          <div className="sticky bottom-0 z-20 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur sm:rounded-b-xl sm:px-5">
+            {footer}
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -219,9 +233,15 @@ export function MoreMenu({ label, items }: {
     if (!open) return;
     const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const away = () => setOpen(false); // scrolling or resizing: don't leave the menu floating away from its button
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+    window.addEventListener("scroll", away, true);
+    window.addEventListener("resize", away);
+    return () => {
+      document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc);
+      window.removeEventListener("scroll", away, true); window.removeEventListener("resize", away);
+    };
   }, [open]);
   return (
     <div className="relative" ref={ref}>

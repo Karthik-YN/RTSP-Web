@@ -1508,7 +1508,7 @@ class StreamSupervisor:
             "process": proc_stats,
             "loop_count": loops if row.playback_mode == "loop" else 0,
             "loop_period_s": rt.plan.period_s if rt and rt.plan else (row.config_json or {}).get("period_s"),
-            "playback_position_s": (row.effective_start_s + (pub.progress.out_time_s % rt.plan.period_s))
+            "playback_position_s": (row.effective_start_s + (pub.progress.out_time_now() % rt.plan.period_s))
             if pub and rt and rt.plan and rt.plan.period_s > 0 else None,
             "waiting_for_mediamtx": bool(rt and rt.waiting_for_mediamtx),
             "consecutive_failures": rt.failures if rt else 0,

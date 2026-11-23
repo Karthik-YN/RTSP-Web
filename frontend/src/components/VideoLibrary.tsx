@@ -306,9 +306,14 @@ function FiltersButton({ active, children }: { active: number; children: React.R
     if (!open) return;
     const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const away = () => setOpen(false);
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+    window.addEventListener("resize", away);
+    return () => {
+      document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc);
+      window.removeEventListener("resize", away);
+    };
   }, [open]);
   return (
     <div className="relative" ref={ref}>

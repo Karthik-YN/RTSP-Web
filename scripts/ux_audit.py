@@ -61,6 +61,7 @@ def main() -> int:
     ap.add_argument("--dist", help="serve this frontend build instead of the dashboard's own")
     ap.add_argument("--idle", type=float, default=20, help="seconds idle per page")
     ap.add_argument("--json", help="write the results here")
+    ap.add_argument("--shots", help="save a full-page screenshot of every page/mode here (compare runs to spot layout changes)")
     a = ap.parse_args()
     from playwright.sync_api import sync_playwright
 
@@ -120,6 +121,9 @@ def main() -> int:
                         row["axe_violations"] = 0
                         row["axe"] = ["axe unavailable (offline?)"]
                     row["errors"] = errors[:3]
+                    if a.shots:
+                        pathlib.Path(a.shots).mkdir(parents=True, exist_ok=True)
+                        pg.screenshot(path=str(pathlib.Path(a.shots) / f"{name}-{scheme}-{device}.png"), full_page=True)
                     results.append(row)
                     for k, limit in {**BUDGET, **PAGE_BUDGET.get(name, {})}.items():
                         if row[k] > limit:

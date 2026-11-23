@@ -103,9 +103,10 @@ describe("CreateStreamDialog", () => {
     const user = userEvent.setup();
     const withClock = { ...config, features: ["clock_overlay"] } as typeof config;
     render(<ToastProvider><CreateStreamDialog videos={[video]} streams={[]} config={withClock} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
-    // both choices are visible at once: clock yes/no, and the time standard (greyed out while "No")
-    const yes = screen.getByRole("radio", { name: /Yes: Server clock in picture/ });
-    expect(screen.getByRole("radio", { name: /No: send the video as it is/ })).toBeChecked();
+    // both choices are visible at once: clock off/on, and the time standard (greyed out while off)
+    expect(screen.getByText("Server clock in picture")).toBeInTheDocument();
+    const yes = screen.getByRole("radio", { name: "On" });
+    expect(screen.getByRole("radio", { name: "Off" })).toBeChecked();
     expect(screen.getByRole("radio", { name: /IST/ })).toBeDisabled();
     await user.click(yes);
     expect(screen.getByRole("radio", { name: /IST/ })).toBeChecked(); // IST unless UTC is picked
@@ -146,9 +147,45 @@ describe("CreateStreamDialog", () => {
     await waitFor(() => expect(body.force_transcode).toBe(true));
   });
 
+  it("lays the form out as Video, Stream name, What plays, Output, with a summary and the button's reason", async () => {
+    mockFetch((url) => (url.includes("/validate") ? okValidation : {}));
+    const user = userEvent.setup();
+    render(<ToastProvider><CreateStreamDialog videos={[video, { ...video, id: 2, rel_path: "gate.mp4", filename: "gate.mp4" }]} streams={[]} config={config} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
+    for (const h of ["Video", "Stream name", "What plays", "Output", "Summary"]) expect(screen.getByRole("heading", { name: h })).toBeInTheDocument();
+    expect(screen.getByText("Advanced")).toBeInTheDocument();
+    // the footer says why Create is off, then that all is set
+    await user.clear(screen.getByLabelText(/Stream name/i));
+    expect(screen.getByTestId("create-status")).toHaveTextContent("Check the stream name");
+    await user.type(screen.getByLabelText(/Stream name/i), "cam1");
+    await waitFor(() => expect(screen.getByTestId("create-status")).toHaveTextContent("Ready"), { timeout: 3000 });
+    // pick another video from the searchable list
+    await user.click(screen.getByRole("button", { name: /store_cam\.mp4/ }));
+    await user.type(screen.getByRole("combobox", { name: "Search videos" }), "gate{Enter}");
+    expect(screen.getByRole("button", { name: /gate\.mp4/ })).toBeInTheDocument();
+    // start/end handles move with the keyboard and fill the fields
+    await user.click(screen.getByRole("slider", { name: "Start handle" }));
+    await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    expect((screen.getByLabelText("Start time") as HTMLInputElement).value).toBe("00:00:10");
+  });
+
   it("does not warn for a normal keyframe interval", () => {
     mockFetch(() => okValidation);
     render(<ToastProvider><CreateStreamDialog videos={[video]} streams={[]} config={config} onClose={() => {}} onCreated={() => {}} /></ToastProvider>);
     expect(screen.queryByTestId("long-gop")).toBeNull();
+  });
+});
+
+describe("MoreMenu", () => {
+  it("closes on Escape, outside clicks and scrolling (never floats away from its button)", async () => {
+    const { MoreMenu } = await import("./common");
+    const user = userEvent.setup();
+    render(<MoreMenu label="More" items={[{ label: "Do it", icon: null, onClick: () => {} }]} />);
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    window.dispatchEvent(new Event("scroll"));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
