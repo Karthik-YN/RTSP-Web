@@ -317,7 +317,7 @@ def check_frames(api: Api, s: dict, rtsp_base: str, compare: bool):
     code, cur, _, _ = api.get(f"/api/streams/{s['id']}")
     pos = ((cur or {}).get("runtime") or {}).get("playback_position_s") if code == 200 else None
     t_pos = time.monotonic()
-    live = gray_frames(f"{rtsp_base}/{n}", W, H, 4.5, rtsp=True)
+    live = gray_frames(f"{rtsp_base}/{n}", W, H, 4.5, rtsp=True, low_delay=True)  # decoder queue would skew the timing
     if pos is None or not live:
         rec("frames", "frames = library file", n, "SKIP", "no playback position")
         return
@@ -338,7 +338,7 @@ def check_frames(api: Api, s: dict, rtsp_base: str, compare: bool):
             cache[dtv] = mad(frame, g) if g else 1e9
         return cache[dtv]
 
-    # coarse: the portal's position estimate drifts a few ms per loop (ffmpeg output time), so look -8..+3 s
+    # coarse: look -8..+3 s around the portal's estimate (it is within ~1 s; still scenes match in several places)
     best = min((diff_at(float(x)), float(x)) for x in range(-8, 4))
     # fine: frame steps around the best second
     fps = ((cur.get("runtime") or {}).get("progress") or {}).get("fps") or 25
@@ -346,7 +346,7 @@ def check_frames(api: Api, s: dict, rtsp_base: str, compare: bool):
     best = min([best] + [(diff_at(round(best[1] + k * step, 3)), round(best[1] + k * step, 3))
                          for k in range(-int(0.6 / step), int(0.6 / step) + 1)])
     # a different video / wrong place typically differs by 25+ levels; the same frame by a few (compression, overlay)
-    note = f" · portal position estimate off by {best[1]:+.1f} s (cosmetic: loop drift)" if abs(best[1]) > 2 else ""
+    note = f" · portal position estimate off by {best[1]:+.1f} s (cosmetic)" if abs(best[1]) > 2 else ""
     rec("frames", "frames = library file", n, "PASS" if best[0] < 12 else "WARN" if best[0] < 22 else "FAIL",
         f"difference {best[0]:.1f}/255 at file position {(p0 + best[1]) % (period or 1e9):.1f}s{note}")
 

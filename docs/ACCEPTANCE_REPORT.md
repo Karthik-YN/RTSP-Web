@@ -67,7 +67,7 @@
 
 | Feature | Status | Evidence |
 |---|---|---|
-| Analytics taskbar (17 analytics, 4 categories, video placeholders, run N cameras) | PASS (dev) | test_api_analytics.py, analytics.test.tsx, browser walkthrough 2026-11-11 |
+| Analytics (Overview page and analytics pages; 17 analytics, 4 categories, video placeholders, run N cameras) | PASS (dev) | test_api_analytics.py, analytics.test.tsx, browser walkthrough 2026-11-11 |
 | Start-of-stream slate (fixed N s, or hold until the first viewer) | PASS (dev, Debian container, Docker image) · **5.x edge NOT RUN** | test_lead_in.py, SPIKE_LEADIN.md, `test_linux.sh install` / `docker` |
 | 2 s spacing between camera starts (every start incl. recovery) | PASS (dev) | test_start_gate.py, test_start_spacing.py; walkthrough: cameras live 2.3 s apart in creation order |
 | Upload from any device (resumable) | PASS (dev, browser + API) · **phone on the office Wi-Fi NOT RUN** | test_api.py upload tests; through Cloudflare: 8 MB chunks < 100 MB limit (not run on a real tunnel) |

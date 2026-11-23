@@ -1,6 +1,17 @@
 # Changelog
 
-All work is on the branch `feature/live-preview-and-launcher`. The branch starts from `304c87d` on `master`.
+Phases 1–11 were built on the branch `feature/live-preview-and-launcher`; Phase 12 on `rig02-phase12-ux-naming-clock`, merged into `main` of the GitHub repository (PR #1, 2026-11-23).
+
+## 2026-11-19 – 23: Phase 12 (RTSP Studio: UX rework, naming, camera-like streams, server clock)
+- **RTSP Studio.** New name and icon; Overview home page with analytics by category (replaces the sidebar tree); Streams grouped by analytics as cards or a table; System page with Health, Events and Settings tabs; phone layout; contrast fixes (axe clean); far fewer re-renders and requests.
+- **Bulk control.** Select all / several streams to start, stop or delete at once.
+- **Naming convention** `WHAT_WHERE_NN[_tag].ext`: Naming guide, upload check (enforce/warn/off), rename through the API without interrupting streams (migration v8); 40 videos renamed.
+- **Camera-like streams.** Converter and copies without B-frames, keyframe every 2 s; new streams keep the file's size by default.
+- **Duplicates.** A file already in the library is recognised by its content on upload.
+- **Server clock.** Optional time (IST/UTC, ms) burned into a stream, rig clock in the top bar and `/clock`, `/api/system/time`, NTP health check.
+- **New stream and analytics run dialogs** redesigned (film-strip start/end, searchable video picker, summary); the request sent is unchanged.
+- **Playback position** in the portal accounts for the age of FFmpeg's progress report.
+- **End-to-end suite** `scripts/e2e/` (browser portal checks + simulated edges, frames, HLS, clock read-back). Final run on the live rig: 320 passed, 0 failed.
 
 ## 2026-11-13 – 14: Phase 11 (standard 720p output, library and analytics, responsive)
 - **Standard 16:9 1280×720 output.**

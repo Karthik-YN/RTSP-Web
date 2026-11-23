@@ -1,4 +1,4 @@
-# RIG-02: Video → RTSP Stream Manager
+# RTSP Studio (RIG-02): Video → RTSP Stream Manager
 
 A small web app on the Proxmox server that turns recorded videos into live RTSP "cameras" for the Video Analytics 5.x edge. Pick a file, choose a start (and optional end) time, loop or play once, and get `rtsp://<server>:8554/<name>` to paste into the portal. Streams survive reboots, MediaMTX crashes and multiple simultaneous users.
 
@@ -6,15 +6,18 @@ A small web app on the Proxmox server that turns recorded videos into live RTSP 
 Video file ─▶ Web dashboard ─▶ FastAPI backend ─▶ FFmpeg publisher (one per stream) ─▶ MediaMTX :8554 ─▶ 5.x edge
 ```
 
-* **Analytics taskbar:** Traffic, People, Earth Science and Parking with their analytics (PPE, VehicleALPR, …) in the left bar. Each analytics has video placeholders with a title and description; upload or pick a video and run 1–20 cameras from it in one go, then start/stop all or copy all URLs. From the library, add any video to analytics (tag button), filter the library by analytics, and review suggestions matched from file names (Fire.mp4 → FireSmoke); press `/` to search the analytics.
-* **Library:** upload from any device's browser to the server (drop files anywhere, several at once, resumable, disk-checked) or copy files into `/data/rtsp-manager/videos`. FFprobe metadata, thumbnail, compatibility verdict, who uploaded it. Search, sort (name, newest, largest, longest) and filter (shape, uploader, analytics, needs attention); grid or compact list; select several videos to add them to analytics at once. Large libraries load 48 cards at a time as you scroll. Anyone can **play** a video in the browser or **download** it to their computer; videos longer than an hour play a **2-minute preview** (from the start, a quarter, half or three quarters in) instead of the whole file. Videos a browser can't play (MPEG-4 Part 2/DivX, H.265, 10-bit, MKV, AVI…), that need live transcoding, or whose keyframes are far apart get a **Convert to H.264** button: one background job makes a copy that plays everywhere, streams without transcoding and starts within 2 s; the original is kept.
-* **Standard 16:9 output (1280×720):** new streams are scaled to the standard size by default ("Original" keeps the file's size; admins can pick other sizes). One click makes a **720p copy** of a 1080p video, which Standard streams then use without live transcoding. Videos that are **not 16:9** (portrait phone clips, 4:3 CCTV) stay in the library for playing and downloading, are marked "Not 16:9", and can't be streamed until a **16:9 copy** is made, with **blurred bars** (recommended), **black bars** or a **crop**.
-* **Streams:** unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x, live video preview in the dashboard. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers (with host names and today's peak; dashboard preview watchers shown separately), the FFmpeg command and the last 20 log lines.
+* **Overview:** the home page shows every analytics by category (Traffic, People, Earth Science, Parking, …) with its live cameras, problems and viewers. Each analytics page has video placeholders with a title and description; upload or pick a video and run 1–20 cameras from it in one go, then start/stop all or copy all URLs. From the library, add any video to analytics, filter by analytics, and review suggestions matched from file names (Fire.mp4 → FireSmoke).
+* **Library:** upload from any device's browser to the server (drop files anywhere, several at once, resumable, disk-checked) or copy files into `/data/rtsp-manager/videos`. FFprobe metadata, thumbnail, compatibility verdict, who uploaded it. Search, sort (name, newest, largest, longest) and filter (shape, uploader, analytics, needs attention, duplicates). A file already in the library is recognised by its content, even under another name; grid or compact list; select several videos to add them to analytics at once. Large libraries load 48 cards at a time as you scroll. Anyone can **play** a video in the browser or **download** it to their computer; videos longer than an hour play a **2-minute preview** (from the start, a quarter, half or three quarters in) instead of the whole file. Videos a browser can't play (MPEG-4 Part 2/DivX, H.265, 10-bit, MKV, AVI…), that need live transcoding, or whose keyframes are far apart get a **Convert to H.264** button: one background job makes a copy that plays everywhere, streams without transcoding and starts within 2 s; the original is kept.
+* **Naming convention:** videos are named `WHAT_WHERE_NN[_tag].ext` (e.g. `ALPR_toll-s1_01.mp4`). A Naming guide explains it, uploads are checked (enforce / warn / off), and videos can be renamed without interrupting the streams that use them.
+* **Output size:** new streams keep the file's size by default ("Same as the file"); the standard 16:9 size (1280×720) and, for admins, other sizes can be chosen. One click makes a **720p copy** of a 1080p video, which Standard streams then use without live transcoding. Videos that are **not 16:9** (portrait phone clips, 4:3 CCTV) stay in the library for playing and downloading, are marked "Not 16:9", and can't be streamed until a **16:9 copy** is made, with **blurred bars** (recommended), **black bars** or a **crop**.
+* **Streams:** grouped by analytics, as cards or a table; select all / several to start, stop or delete at once. Unique name, start/end (HH:MM:SS or slider with a frame preview), loop/once, 1x, live video preview in the dashboard. Start, stop, restart, delete. Per stream: RTSP URL with copy button, status, running since, exact loop count, viewers (with host names and today's peak; dashboard preview watchers shown separately), the FFmpeg command and the last 20 log lines.
+* **Camera-like streams:** copies are made without B-frames and with a keyframe every 2 s, like real IP cameras, so edges decode them the same way.
+* **Server clock:** optional date and time (IST or UTC, with milliseconds) burned into every frame of a stream, a rig clock in the top bar and on `/clock`, and an NTP check, to measure end-to-end delay against laptops and edges.
 * **Monitoring:** CPU, RAM, disk, capacity, viewers; MediaMTX health (down detected in ≤ 5 s) with automatic restart and republishing.
 * **Codecs:** H.264 8-bit is stream-copied; H.265/VP9/AV1/10-bit are transcoded to H.264 (with a CPU warning) or refused, per policy. Audio is always dropped.
 * **Teams:** direct access for everyone on the network by default, or turn on login (admin / operator / viewer; uploads then record the user), stream notes, groups ("demo sets") with start/stop all and URL export, bulk actions, clone, audit log.
 * **Operations:** streams keep playing through backend restarts and upgrades; HTTPS option; nightly backups; webhook alerts (Teams/Slack); Prometheus metrics; per-stream availability and bitrate; resumable uploads; light/dark UI that works on phones and tablets (dialogs open full-screen on phones).
-* **Health page:** one button runs every check (MediaMTX, exposed ports, disk, backups, database, CPU/RAM headroom, every running stream read over RTSP) with PASS/WARN/FAIL and a downloadable report; a quick check runs by itself every 10 min and alerts on changes. Capacity limits are set there from a load test.
+* **System page (Health, Events, Settings):** one button runs every check (MediaMTX, exposed ports, disk, backups, database, CPU/RAM headroom, every running stream read over RTSP) with PASS/WARN/FAIL and a downloadable report; a quick check runs by itself every 10 min and alerts on changes. Capacity limits are set there from a load test.
 * **Runs anywhere:** one Docker image (`docker compose up -d`) on any server, or the systemd installer, or `python3 app.py`.
 * **From anywhere:** the dashboard can be published on the internet through a Cloudflare Tunnel behind Cloudflare Access (company sign-in); remote RTSP readers use Cloudflare WARP. Users on other subnets/VPN pick the address their copied URLs use.
 
@@ -103,7 +106,11 @@ backend/.venv/bin/pytest tests/unit -v                   # fast tests only
 backend/.venv/bin/pytest -m performance -s               # 1/4/8/16-stream capacity measurement
 SOAK_SECONDS=1800 backend/.venv/bin/pytest -m long -s    # 30-minute loop soak
 (cd frontend && npm test)                                # frontend unit tests
+scripts/e2e/run.sh http://<server>:8080 readonly         # end-to-end: portal in a browser + simulated edges (safe on a live rig)
+scripts/e2e/run.sh http://<server>:8080 full             # also creates/stops/deletes test streams (e2e-*): use a test instance
 ```
+
+The end-to-end suite (Docker needed) checks every page on desktop and phone, every RTSP URL, two simulated edges per running camera (frame rate, gaps, keyframes, B-frames), the picture against the library file, the browser (HLS) preview, snapshots and the burned-in clock. Results go to `scripts/e2e/results/`.
 
 Edge-dependent tests are manual: **[docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATION.md)**.
 
@@ -121,6 +128,11 @@ Edge-dependent tests are manual: **[docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATIO
 | [docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATION.md) | Manual runbook for the 5.x edge (30-min loop, 16-stream reboot) |
 | [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) | How it works in plain terms, and a full script for demoing it to the team |
 | [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md) | Acceptance checklist, performance and recovery results, report template |
+| [docs/CLOCK_PLAN.md](docs/CLOCK_PLAN.md) | Server clock on the video, rig clock, NTP check: design and status |
+| [docs/PHASE12_PLAN.md](docs/PHASE12_PLAN.md) | Naming convention, Overview page, bulk start/stop, and the upgrade runbook |
+| [docs/UX_PLAN.md](docs/UX_PLAN.md) | UX audit results and the changes made from it |
+| [docs/DESIGN_TOKENS.md](docs/DESIGN_TOKENS.md) | Colours, spacing and type tokens of the dashboard |
+| [docs/naming/](docs/naming/) | Video rename tables (proposed, applied, undo) |
 | [docs/SPIKE_LEADIN.md](docs/SPIKE_LEADIN.md) | Lead-in slate / hold-until-viewer spike: results on macOS and Debian 12, and the design for it |
 
 ## Repository layout
@@ -129,7 +141,7 @@ Edge-dependent tests are manual: **[docs/EDGE_VALIDATION.md](docs/EDGE_VALIDATIO
 backend/app/            FastAPI app: api/ models/ schemas/ database/ services/
 frontend/src/           React + TypeScript + Tailwind dashboard
 deployment/             mediamtx.yml, mediamtx.service, rtsp-manager.service, polkit rule, nginx.conf
-scripts/                install, start, healthcheck, validate_rtsp, measure_recovery, load_test, generate_test_videos, manage_users
+scripts/                e2e/ (end-to-end suite), install, start, healthcheck, validate_rtsp, measure_recovery, load_test, generate_test_videos, manage_users
 tests/                  unit/ integration/ performance/ (pytest) · manual edge tests in docs/EDGE_VALIDATION.md
 docs/                   documentation and docs/reports/ (measurement JSON)
 storage/                local development data (git-ignored)

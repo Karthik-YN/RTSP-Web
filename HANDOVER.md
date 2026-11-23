@@ -1,5 +1,7 @@
 # RIG-02 hand-over: adding it to the VD-Analytics repository
 
+> **Update 2026-11-23:** the code now lives on GitHub (`main`, including Phase 12). This note describes the 2026-11-14 NAS hand-over and is kept for reference.
+
 For: Vyasa. From: Karthik. Date: 2026-11-14.
 
 RIG-02 turns recorded videos into live RTSP "cameras" for the Video Analytics 5.x edge. It has:
