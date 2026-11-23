@@ -44,6 +44,9 @@ def test_convert_reasons():
     assert any("Keyframes only every 10.4 s" in r for r in convert_reasons(_v(keyframe_interval_s=10.4)))
     assert convert_reasons(_v(compat_mode="reject")) == []
     assert convert_reasons(_v(rel_path="cam (h264).mp4", keyframe_interval_s=10)) == []  # already a copy
+    bf = {"streams": [{"codec_type": "video", "has_b_frames": 2}]}
+    assert any("B-frames" in r for r in convert_reasons(_v(probe_json=bf)))  # real cameras send none
+    assert not any("B-frames" in r for r in convert_reasons(_v(probe_json={"streams": [{"codec_type": "video", "has_b_frames": 0}]})))
     assert target_rel("sub/old cam.avi") == "sub/old cam (h264).mp4"
 
 

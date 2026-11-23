@@ -15,19 +15,38 @@ export interface LibraryFilters {
   /** "" = anyone; "-" = added on the server; otherwise a username. */
   uploader: string;
   analytics: AnalyticsFilter;
+  /** Only videos whose name does not follow WHAT_WHERE_NN (to rename them). */
+  naming?: boolean;
 }
 
-export const NO_FILTERS: LibraryFilters = { q: "", sort: "name", shape: "", attention: false, uploader: "", analytics: "" };
+export const NO_FILTERS: LibraryFilters = { q: "", sort: "name", shape: "", attention: false, uploader: "", analytics: "", naming: false };
 
 export const SORT_LABEL: Record<SortKey, string> = {
   name: "Name", newest: "Newest", size: "Largest", duration: "Longest",
 };
 
 export function filtersActive(f: LibraryFilters): boolean {
-  return !!(f.q.trim() || f.shape || f.attention || f.uploader || f.analytics);
+  return !!(f.q.trim() || f.shape || f.attention || f.uploader || f.analytics || f.naming);
 }
 
 /** Things worth knowing before streaming this video; shown as one "N notes" chip. */
+/** What makes this video behave unlike a real camera for the edges (empty: camera-like).
+ *  Short label for the chip, and the full sentence for its tooltip. */
+export function videoProblems(v: Video): { short: string; text: string }[] {
+  const p: { short: string; text: string }[] = [];
+  if (v.compat_mode === "transcode") {
+    p.push({ short: "Live transcoding", text: "Sent with live transcoding (costs a CPU core per stream)" +
+      (v.compat_reasons.length ? `: ${v.compat_reasons.join("; ")}` : ".") });
+  }
+  const k = v.keyframe_interval_s;
+  if (k != null && Number.isFinite(k) && k > 4) { // same limit as the server; real cameras: 1-2 s
+    const n = String(Number(k.toFixed(1)));
+    p.push({ short: `Keyframe every ${n} s`, text: `Keyframe every ${n} s: edges wait up to ${n} s for the first picture after connecting.` });
+  }
+  if (v.b_frames) p.push({ short: "B-frames", text: "Has B-frames (real cameras don't): some edges show frames out of order." });
+  return p;
+}
+
 export function videoNotes(v: Video): string[] {
   const n: string[] = [];
   if (v.compat_mode === "transcode") n.push("Needs live transcoding" + (v.compat_reasons.length ? `: ${v.compat_reasons.join("; ")}` : ""));
@@ -63,9 +82,11 @@ export function applyLibraryFilters(videos: Video[], f: LibraryFilters, _out?: O
   const q = f.q.trim().toLowerCase();
   const list = videos.filter((v) =>
     (!q || v.rel_path.toLowerCase().includes(q) || uploaderName(v).toLowerCase().includes(q)
-      || (v.analytics ?? []).some((a) => a.name.toLowerCase().includes(q)))
+      || (v.analytics ?? []).some((a) => a.name.toLowerCase().includes(q))
+      || [v.original_name ?? "", ...(v.previous_names ?? [])].some((n) => n.toLowerCase().includes(q)))
+    && (!f.naming || v.name_parts === null)
     && (!f.shape || (f.shape === "16:9" ? v.is_16_9 !== false : v.is_16_9 === false))
-    && (!f.attention || videoNotes(v).length > 0)
+    && (!f.attention || videoProblems(v).length > 0)
     && (!f.uploader || uploaderKey(v) === f.uploader)
     && inAnalytics(v, f.analytics));
   const byName = (a: Video, b: Video) => a.rel_path.localeCompare(b.rel_path, undefined, { numeric: true, sensitivity: "base" });

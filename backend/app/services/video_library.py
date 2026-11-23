@@ -15,7 +15,7 @@ from sqlalchemy import select
 from ..config import Settings
 from ..database import Database, utcnow
 from ..models import Video, VideoStatus
-from . import compatibility
+from . import compatibility, naming, naming_db
 from .events import EventLog
 from .ffprobe_service import ProbeError, available_decoders, grab_frame_jpeg, has_encoder, probe
 from .file_manager import (FileIdentity, Library, LibraryError, UploadReservations, public_error, quick_hash,
@@ -42,14 +42,28 @@ class VideoLibrary:
         from .converter import Converter
         from .preview import PreviewCache
         self.converter = Converter(self)
+        # codecs sent to edges as-is on top of RTSPM_COPY_CODECS (admin switch; set in main.py)
+        self.extra_copy_codecs = lambda: ()
         self.previews = PreviewCache(self)
 
     # ---------------------------------------------------------- compat
     def compat_for(self, meta: dict, force_transcode: bool = False) -> compatibility.CompatResult:
         return compatibility.evaluate(
             meta, self.s, available_decoders(self.s.ffmpeg_bin),
-            has_encoder(self.s.ffmpeg_bin, "libx264"), force_transcode,
+            has_encoder(self.s.ffmpeg_bin, "libx264"), force_transcode, tuple(self.extra_copy_codecs()),
         )
+
+    def recheck_compat(self) -> int:
+        """Re-evaluate every ready video's mode (copy / transcode) after a policy change, such as
+        the H.265 pass-through switch. Returns how many changed."""
+        changed = 0
+        with self.db.session() as s:
+            for v in s.scalars(select(Video).where(Video.status == VideoStatus.READY)):
+                c = self.compat_for(self.meta_of(v))
+                if (v.compat_mode, v.compat_reasons, v.compat_warnings) != (c.mode, c.reasons, c.warnings):
+                    v.compat_mode, v.compat_reasons, v.compat_warnings = c.mode, c.reasons, c.warnings
+                    changed += 1
+        return changed
 
     @staticmethod
     def meta_of(v: Video) -> dict:
@@ -58,6 +72,7 @@ class VideoLibrary:
             "bit_depth": v.bit_depth, "width": v.width, "height": v.height, "fps": v.fps,
             "is_vfr": bool(v.is_vfr), "audio_codec": v.audio_codec, "field_order": v.field_order,
             "keyframe_interval_s": v.keyframe_interval_s,
+            "has_b_frames": compatibility.b_frames(v.probe_json),
         }
 
     # ---------------------------------------------------------- scanning
@@ -230,9 +245,36 @@ class VideoLibrary:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
+    # ---------------------------------------------------------- naming convention
+    # Set by main.py to the live setting (enforce | warn | off); default for tools/tests built without main.
+    naming_mode = staticmethod(lambda: "off")
+
+    def naming_gate(self, name: str) -> None:
+        """Refuse a non-conforming upload name in "enforce" mode, with the reasons and a suggestion."""
+        if self.naming_mode() != "enforce":
+            return
+        known = naming_db.code_set(self.db)
+        result = naming.check(name, known)
+        if result.ok:
+            return
+        try:
+            hint = naming.suggest(name, known, naming_db.names_in_use(self.db))
+        except ValueError:
+            hint = None
+        raise LibraryError(
+            f"'{name}' does not follow the naming convention WHAT_WHERE_NN (for example ALPR_toll-s1_01.mp4): "
+            + " ".join(result.errors) + (f" Suggested: {hint}" if hint else ""),
+            422, {"naming": result.view(), "suggestion": hint})
+
     # ---------------------------------------------------------- uploads
-    def upload_check(self, filename: str, size: int) -> dict:
+    def upload_check(self, filename: str, size: int, quick_hash_hex: str | None = None) -> dict:
         name = sanitize_upload_name(filename, self.s.allowed_extensions)
+        if quick_hash_hex:  # same content already here? (checked before the name, so a duplicate needs no renaming)
+            dup = self.same_content(size, quick_hash_hex.lower())
+            if dup is not None:
+                return {"filename": name, "exists": False, **self.uploads.check(self.lib, size),
+                        "duplicate_of": {"id": dup.id, "rel_path": dup.rel_path}}
+        self.naming_gate(name)
         if size <= 0:
             raise LibraryError("Upload size must be greater than zero.")
         if size > self.s.upload_max_bytes:
@@ -249,6 +291,7 @@ class VideoLibrary:
         before the first byte is written.
         """
         name = sanitize_upload_name(filename, self.s.allowed_extensions)
+        self.naming_gate(name)
         if size <= 0:
             raise LibraryError("A Content-Length header with the file size is required.", 411)
         if size > self.s.upload_max_bytes:
@@ -289,7 +332,20 @@ class VideoLibrary:
             self.uploads.release(token)
         return await self._register_upload(final, name, size, username, origin)
 
+    def same_content(self, size: int, qh: str) -> Video | None:
+        """A library video with exactly this content fingerprint (size + quick_hash), whatever its name."""
+        with self.db.session() as s:
+            return s.scalar(select(Video).where(Video.size_bytes == size, Video.quick_hash == qh,
+                                                Video.status != VideoStatus.MISSING).limit(1))
+
     async def _verify_and_link(self, tmp: Path, final: Path, name: str) -> None:
+        # Duplicates are refused by CONTENT, not name: a renamed copy of a library video is not stored twice.
+        size = tmp.stat().st_size
+        dup = self.same_content(size, await asyncio.to_thread(quick_hash, tmp, size))
+        if dup is not None:
+            raise LibraryError(f"Duplicate video: it is already in the library as '{dup.rel_path}' (same content). "
+                               "Not stored again; use the existing one.", 409,
+                               {"duplicate_of": {"id": dup.id, "rel_path": dup.rel_path}})
         try:
             meta = await asyncio.to_thread(probe, self.s.ffprobe_bin, tmp)
         except ProbeError as exc:
@@ -311,6 +367,8 @@ class VideoLibrary:
             row.uploaded_at = utcnow()
             row.uploaded_from = (origin.get("ip") or None)
             row.uploaded_agent = (origin.get("agent") or "")[:300] or None
+            original = (origin.get("original_name") or "").strip()[:255]
+            row.original_name = original if original and original != name else None
         video = row  # committed when the session closes; attributes stay loaded
         self.events.add("video.uploaded", f"{name} ({size} bytes)", username=username, data={"video_id": video.id})
         return video
@@ -323,6 +381,7 @@ class VideoLibrary:
 
     def start_session(self, filename: str, size: int, username: str | None, origin: dict | None = None) -> dict:
         name = sanitize_upload_name(filename, self.s.allowed_extensions)
+        self.naming_gate(name)
         if size <= 0:
             raise LibraryError("Upload size must be greater than zero.")
         if size > self.s.upload_max_bytes:

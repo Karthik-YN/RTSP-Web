@@ -5,7 +5,7 @@ import { ToastProvider } from "./common";
 import { UploadQueueProvider } from "./UploadQueue";
 import { RigDataProvider } from "../hooks/useRigData";
 import { PAGE, VideoLibrary } from "./VideoLibrary";
-import { applyLibraryFilters, NO_FILTERS, uploaders, videoNotes } from "../lib/libraryFilters";
+import { applyLibraryFilters, NO_FILTERS, uploaders, videoNotes, videoProblems } from "../lib/libraryFilters";
 import type { AppConfig, User, Video } from "../types/api";
 
 const admin: User = { username: "anonymous", role: "admin", can_write: true, is_admin: true, auth_enabled: false };
@@ -52,6 +52,8 @@ describe("library filters and sort", () => {
     expect(names({ analytics: "16" })).toEqual(["Fire.mp4"]);
     expect(names({ analytics: "none" })).toEqual(["gate.mp4", "phone clip.mp4"]);
     expect(names({ attention: true })).toEqual(["gate.mp4"]);
+    expect(videoProblems(gate).map((p) => p.short)).toEqual(["Keyframe every 10 s"]);
+    expect(videoProblems({ ...fire, b_frames: true }).map((p) => p.short)).toEqual(["B-frames"]);
     expect(videoNotes(gate)[0]).toMatch(/Keyframes only every 10.0 s/);
     expect(uploaders(all)).toEqual(["admin", "alice", "bob"]);
   });
@@ -91,15 +93,21 @@ describe("VideoLibrary", () => {
     const u = userEvent.setup();
     show([fire, gate, phone]);
     expect(screen.getByTestId("library-count")).toHaveTextContent("3 videos");
+    await u.click(screen.getByRole("button", { name: "Filters" }));
     await u.selectOptions(screen.getByLabelText("Filter by shape"), "other");
     expect(screen.getByTestId("library-count")).toHaveTextContent("1 of 3 videos");
+    // the active filter shows as a removable chip next to the count
+    expect(screen.getByRole("button", { name: /Remove filter: Not 16:9/ })).toBeInTheDocument();
     expect(screen.getAllByTestId("thumb-box")).toHaveLength(1);
     await u.type(screen.getByLabelText("Search videos"), "zzz");
     expect(screen.getByTestId("no-match")).toBeInTheDocument();
     await u.click(screen.getAllByRole("button", { name: "Clear filters" })[0]);
     expect(screen.getAllByTestId("thumb-box")).toHaveLength(3);
-    // one "notes" chip instead of a row of warning pills
-    expect(screen.getByRole("button", { name: "1 note about gate.mp4" })).toHaveTextContent("1 note");
+    // only what needs a look: one chip on the video that isn't camera-like, nothing on the others
+    expect(screen.getAllByTestId("problem-chip")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Keyframe every 10 s: gate.mp4" })).toBeInTheDocument();
+    expect(screen.queryByText("Edge-ready")).toBeNull();
+    await u.click(screen.getByRole("button", { name: /^Filters/ }));
     await u.click(screen.getByRole("button", { name: /Needs attention \(1\)/ }));
     expect(screen.getAllByTestId("thumb-box")).toHaveLength(1);
   });
@@ -144,5 +152,30 @@ describe("VideoLibrary", () => {
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls
       .filter(([u2, i]) => String(u2) === "/api/analytics/assign" && i?.method === "POST");
     expect(calls.map(([, i]) => JSON.parse(String(i!.body)))).toEqual([{ video_ids: [1, 2, 3], analytics_ids: [21] }]);
+  });
+});
+
+describe("library card actions", () => {
+  it("keeps one main button per card; the rest is in the ⋯ menu", async () => {
+    const u = userEvent.setup();
+    show([{ ...fire, b_frames: false }]);
+    expect(screen.queryByRole("button", { name: /Make 720p copy/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete Fire.mp4/ })).toBeNull();
+    await u.click(screen.getByRole("button", { name: "More actions for Fire.mp4" }));
+    for (const item of ["Play in browser", "Details", "Add to analytics", "Make a copy (same size)", "Download", "Delete"]) {
+      expect(screen.getByRole("menuitem", { name: new RegExp(item.replace(/[()]/g, "\\$&")) })).toBeInTheDocument();
+    }
+  });
+});
+
+describe("same content twice", () => {
+  it("flags the later copy as 'Same video as …', found by content not name", () => {
+    const a = vid(1, "gate.mp4", { size_bytes: 5000, thumbnail_url: "/api/videos/1/thumbnail?h=abcd1234" });
+    const b = vid(2, "boom copy.mp4", { size_bytes: 5000, thumbnail_url: "/api/videos/2/thumbnail?h=abcd1234" });
+    const c = vid(3, "other.mp4", { size_bytes: 5000, thumbnail_url: "/api/videos/3/thumbnail?h=ffff0000" });
+    show([a, b, c]);
+    const flags = screen.getAllByTestId("same-as");
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toHaveTextContent("Same video as gate.mp4");
   });
 });

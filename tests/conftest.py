@@ -67,6 +67,8 @@ class Rig:
             # Production scales new streams to the standard 1280x720; the fixtures are
             # small 16:9 clips, so tests not about output size stream them as they are.
             output_default="original",
+            # Most fixtures upload names like clip.mp4; naming tests turn the check on.
+            naming_mode="off",
         )
         params.update(overrides)
         self.settings = Settings(_env_file=None, **params)

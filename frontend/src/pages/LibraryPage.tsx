@@ -30,7 +30,7 @@ export function LibraryPage() {
     <div className="space-y-2">
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-0 flex-1 basis-64">
-          <h1 className="text-2xl font-bold tracking-tight">Shared video library</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Library</h1>
           <p className="text-sm text-muted">Every video on this server, shared by all users, including the ones uploaded
             from an analytics page. Click a video to play it; its tags show which analytics it belongs to.</p>
         </div>

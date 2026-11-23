@@ -44,6 +44,24 @@ class RuntimeSettings:
                 pass
         return int(getattr(self.s, key))
 
+    def get_str(self, key: str) -> str | None:
+        row = self._load().get(key)
+        return None if row is None else row["value"]
+
+    def set_str(self, key: str, value: str | None, username: str | None) -> None:
+        """Save a text value (None = back to the environment default)."""
+        with self.db.session() as s:
+            if value is None:
+                s.execute(text("DELETE FROM app_settings WHERE key = :k"), {"k": key})
+            else:
+                s.execute(text(
+                    "INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (:k, :v, :t, :u) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, "
+                    "updated_by = excluded.updated_by"),
+                    {"k": key, "v": value, "t": utcnow().isoformat(), "u": username})
+        with self._lock:
+            self._cache = None
+
     def info(self, key: str) -> dict:
         row = self._load().get(key)
         return {"value": self.get_int(key), "default": int(getattr(self.s, key)),

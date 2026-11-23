@@ -104,6 +104,9 @@ class Video(Base):
     uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     uploaded_from: Mapped[str | None] = mapped_column(Text, nullable=True)  # client IP
     uploaded_agent: Mapped[str | None] = mapped_column(Text, nullable=True)  # browser User-Agent
+    # naming convention: the file name before upload/rename, and every earlier name (newest last)
+    original_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_names: Mapped[list | None] = mapped_column(JSONText, nullable=True)
 
     def fingerprint(self) -> dict:
         return {
@@ -177,6 +180,8 @@ class Analytics(Base):
     description: Mapped[str | None] = mapped_column(Text)
     sort: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # WHAT part of video names (services/naming.py), e.g. ALPR; filled in for every analytics.
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AnalyticsSlot(Base):

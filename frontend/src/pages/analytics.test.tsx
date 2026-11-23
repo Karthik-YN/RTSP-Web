@@ -1,7 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { quickHash } from "../lib/contentHash";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { AnalyticsNav } from "../components/AppShell";
+import { OverviewPage } from "./OverviewPage";
 import { AssignDialog, filterByAnalytics, SuggestionsDialog } from "../components/LibraryAnalytics";
 import { ToastProvider } from "../components/common";
 import { UploadQueueProvider } from "../components/UploadQueue";
@@ -61,30 +62,86 @@ function wrap(ui: React.ReactNode, at = "/", cfg: AppConfig = config) {
   );
 }
 
-describe("Analytics taskbar", () => {
-  it("lists categories with live/total counts and filters by search", async () => {
-    mockFetch({ "/api/analytics": tree, "/api/streams": [] });
-    const u = userEvent.setup();
-    wrap(<AnalyticsNav />);
-    expect(await screen.findByText("videoANPR")).toBeInTheDocument();
-    expect(screen.getByText("Traffic")).toBeInTheDocument();
-    expect(screen.getByText("2/3")).toBeInTheDocument(); // live/total
-    expect(screen.getByTitle("1 stream(s) need attention")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /PPE/ })).toHaveAttribute("href", "/analytics/21");
+// streams of videoANPR (slot 5) and one stream that is in no analytics
+const anprLive = { id: 31, name: "anpr-1", status: "RUNNING", desired_state: "RUNNING", slot_id: 5, video_id: 7,
+  source_rel_path: "gate.mp4", runtime: { viewer_count: 1 } } as unknown as Stream;
+const anprDown = { id: 32, name: "anpr-2", status: "ERROR", desired_state: "RUNNING", slot_id: 5, video_id: 7,
+  source_rel_path: "gate.mp4", runtime: { viewer_count: 0 } } as unknown as Stream;
+const loose = { id: 33, name: "old-cam", status: "STOPPED", desired_state: "STOPPED", slot_id: null, video_id: 8,
+  source_rel_path: "old.mp4", runtime: { viewer_count: 0 } } as unknown as Stream;
+const inAnpr = { ...video, analytics: [{ id: 11, name: "videoANPR", slot_id: 5 }] } as unknown as Video;
+const unassigned = { ...video, id: 8, filename: "old.mp4", rel_path: "old.mp4", analytics: [] } as unknown as Video;
+const overviewRoutes = { "/api/analytics": tree, "/api/streams": [anprLive, anprDown, loose], "/api/videos": [inAnpr, unassigned] };
 
-    await u.type(screen.getByLabelText("Find an analytics"), "dwell");
-    expect(screen.getByText("VehicleDwell")).toBeInTheDocument();
-    expect(screen.queryByText("videoANPR")).not.toBeInTheDocument();
-    expect(screen.queryByText("People")).not.toBeInTheDocument();
+describe("Overview (main page)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("shows each category as a section with its analytics, counts and problems", async () => {
+    mockFetch(overviewRoutes);
+    wrap(<OverviewPage />);
+    const tile = await screen.findByRole("article", { name: "Analytics videoANPR" });
+    expect(within(tile).getByText("1/2")).toBeInTheDocument(); // live/total
+    expect(within(tile).getByText("1 video")).toBeInTheDocument();
+    expect(within(tile).getByTitle("1 stream(s) need attention")).toBeInTheDocument();
+    expect(within(tile).getByRole("link", { name: "Open" })).toHaveAttribute("href", "/analytics/11");
+    // analytics without videos or streams fold into one line instead of empty tiles
+    expect(screen.queryByRole("article", { name: "Analytics VehicleDwell" })).toBeNull();
+    expect(screen.getByText(/1 empty analytics: VehicleDwell/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "People" })).toBeInTheDocument();
+    expect(screen.getByText("1 need attention")).toBeInTheDocument();
   });
 
-  it("folds a category", async () => {
-    mockFetch({ "/api/analytics": tree, "/api/streams": [] });
+  it("finds analytics by name, code or video, and filters by category", async () => {
+    mockFetch(overviewRoutes);
     const u = userEvent.setup();
-    wrap(<AnalyticsNav />);
-    await u.click(await screen.findByRole("button", { name: /Traffic/ }));
-    expect(screen.queryByText("videoANPR")).not.toBeInTheDocument();
-    expect(screen.getByText("PPE")).toBeInTheDocument();
+    wrap(<OverviewPage />);
+    await screen.findByRole("article", { name: "Analytics videoANPR" });
+    await u.type(screen.getByLabelText("Find analytics, video or stream"), "gate.mp4");
+    expect(screen.getByRole("article", { name: "Analytics videoANPR" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "People" })).toBeNull();
+    await u.clear(screen.getByLabelText("Find analytics, video or stream"));
+    await u.click(screen.getByRole("tab", { name: "People" }));
+    expect(screen.queryByRole("article", { name: "Analytics videoANPR" })).toBeNull();
+    expect(screen.getByText(/1 empty analytics: PPE/)).toBeInTheDocument();
+  });
+
+  it("folds a category and remembers it; lists what is in no analytics", async () => {
+    mockFetch(overviewRoutes);
+    const u = userEvent.setup();
+    const { unmount } = wrap(<OverviewPage />);
+    await screen.findByRole("article", { name: "Analytics videoANPR" });
+    await u.click(screen.getByRole("button", { name: "Traffic" }));
+    expect(screen.queryByRole("article", { name: "Analytics videoANPR" })).toBeNull();
+    // "Not in any analytics" starts folded
+    const none = screen.getByRole("button", { name: "Not in any analytics" });
+    expect(screen.getByText("1 videos, 1 streams")).toBeInTheDocument();
+    await u.click(none);
+    expect(screen.getByRole("link", { name: /old-cam/ })).toHaveAttribute("href", "/streams/33");
+    expect(screen.getByRole("link", { name: /1 videos in the library/ })).toHaveAttribute("href", "/library?analytics=none");
+    unmount();
+    wrap(<OverviewPage />);
+    await screen.findByRole("button", { name: "Traffic" });
+    expect(screen.queryByRole("article", { name: "Analytics videoANPR" })).toBeNull(); // still folded
+  });
+
+  it("starts all stopped streams of a category with one click", async () => {
+    mockFetch({ ...overviewRoutes, "/api/streams/bulk": { ok: 1, failed: 0, results: [{ id: 32, ok: true }] } });
+    const u = userEvent.setup();
+    wrap(<OverviewPage />);
+    const tile = await screen.findByRole("article", { name: "Analytics videoANPR" });
+    await u.click(within(tile).getByRole("button", { name: /Start 1/ }));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/streams/bulk",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ stream_ids: [32], action: "start" }) })));
+  });
+
+  it("jumps to the search with /", async () => {
+    mockFetch(overviewRoutes);
+    const u = userEvent.setup();
+    wrap(<OverviewPage />);
+    await screen.findByRole("article", { name: "Analytics videoANPR" });
+    await u.keyboard("/");
+    expect(screen.getByLabelText("Find analytics, video or stream")).toHaveFocus();
+    expect(screen.getByLabelText("Find analytics, video or stream")).toHaveValue("");
   });
 });
 
@@ -108,7 +165,7 @@ describe("AnalyticsPage", () => {
     expect(within(row).getByTitle(/2 edge\/RTSP viewer\(s\) now · peak today 3/)).toBeInTheDocument();
     expect(within(row).getByTitle(/Watching the preview/)).toHaveTextContent("1");
 
-    await u.click(screen.getByRole("button", { name: /Run RTSP/ }));
+    await u.click(screen.getByRole("button", { name: /^New stream$/ }));
     const dialog = await screen.findByRole("dialog");
     const count = within(dialog).getByLabelText("Number of cameras");
     await u.clear(count);
@@ -136,8 +193,11 @@ describe("AnalyticsPage uploads", () => {
     await waitFor(() => expect(posts("/api/analytics/assign")).toEqual([{ video_ids: [40], analytics_ids: [21] }]));
   });
 
-  it("a dropped file that is already in the library is added without uploading it again", async () => {
-    mockFetch({ "/api/analytics": tree, "/api/analytics/21": empty, "/api/streams": [], "/api/videos": [libVideo],
+  it("a dropped file whose CONTENT is already in the library is added without uploading, whatever its name", async () => {
+    const bytes = new Uint8Array(1234).map((_, i) => i % 251);
+    const sameContent = { ...libVideo, filename: "totally-different-name.mp4", rel_path: "totally-different-name.mp4",
+      original_name: null, size_bytes: 1234, quick_hash: await quickHash(new Blob([bytes])) };
+    mockFetch({ "/api/analytics": tree, "/api/analytics/21": empty, "/api/streams": [], "/api/videos": [sameContent],
       "/api/analytics/assign": { created: [{ slot_id: 51, analytics_id: 21, analytics_name: "PPE", video_id: 40 }], skipped: 0 } });
     const u = userEvent.setup();
     wrap(<Routes><Route path="/analytics/:id" element={<AnalyticsPage />} /></Routes>, "/analytics/21");
@@ -145,9 +205,10 @@ describe("AnalyticsPage uploads", () => {
     await waitFor(() => expect((globalThis.fetch as unknown as { mock: { calls: [string][] } }).mock.calls
       .some(([url]) => String(url).startsWith("/api/videos"))).toBe(true));
     await new Promise((r) => setTimeout(r, 50)); // let the library list arrive
-    const file = new File([new Uint8Array(1234)], "crowd.mp4", { type: "video/mp4" });
+    const file = new File([bytes], "crowd.mp4", { type: "video/mp4" });
     await u.upload(screen.getByTestId("analytics-upload-input"), file);
     await waitFor(() => expect(posts("/api/analytics/assign")).toEqual([{ video_ids: [40], analytics_ids: [21] }]));
+    expect(await screen.findByText(/Duplicate video: 'crowd.mp4' is already in the library as 'totally-different-name.mp4'/)).toBeInTheDocument();
     expect(posts("/api/videos/uploads")).toEqual([]);
   });
 
@@ -224,18 +285,7 @@ describe("Library and analytics", () => {
     wrap(<Routes><Route path="/analytics/:id" element={<AnalyticsPage />} /></Routes>, "/analytics/21", cfg);
     const box = await screen.findByTestId("slot-not-16-9");
     expect(within(box).getByRole("button", { name: /Use the 16:9 copy/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Run RTSP/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^New stream$/ })).toBeNull();
     expect(screen.getByRole("link", { name: /In library/ })).toHaveAttribute("href", "/library?analytics=21");
-  });
-
-  it("jumps to the analytics search with /", async () => {
-    localStorage.clear(); // an earlier test folds a category
-    mockFetch({ "/api/analytics": tree, "/api/streams": [] });
-    const u = userEvent.setup();
-    wrap(<AnalyticsNav />);
-    await screen.findByText("videoANPR");
-    await u.keyboard("/");
-    expect(screen.getByLabelText("Find an analytics")).toHaveFocus();
-    expect(screen.getByLabelText("Find an analytics")).toHaveValue("");
   });
 });

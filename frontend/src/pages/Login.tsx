@@ -27,7 +27,7 @@ export function Login({ onLogin }: { onLogin: (u: User) => void }) {
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white"><CameraIcon /></span>
           <div>
-            <h1 className="text-lg font-bold">RIG-02 Stream Manager</h1>
+            <h1 className="text-lg font-bold">RTSP Studio</h1>
             <p className="text-sm text-muted">Sign in with your test-rig account</p>
           </div>
         </div>

@@ -1,0 +1,15 @@
+# Optional: let live transcoding use the Intel (or AMD) graphics built into the processor.
+#
+#   echo "RIG02_RENDER_GID=$(getent group render | cut -d: -f3)" >> .env
+#   docker compose -f docker-compose.yml -f docker-compose.gpu-intel.yml up -d
+#
+# Then Health -> Video encoding -> "Check again": Intel Quick Sync / VAAPI should show as working,
+# and "Auto" uses it. Only for a server that HAS /dev/dri (most Intel laptops/mini PCs; a Proxmox VM
+# needs the iGPU passed through first). Without it, Docker refuses to start the container: use the
+# plain docker-compose.yml.
+services:
+  rig02:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RIG02_RENDER_GID:-109}"   # the host's 'render' group, so the rig's user may use the GPU

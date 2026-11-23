@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePolling } from "../hooks/usePolling";
 import { useRig } from "../hooks/useRigData";
 import { useRtspAddress } from "../hooks/useRtspAddress";
 import { formatBytes, formatDuration, formatTime, parseTime } from "../lib/format";
 import { api, ApiError } from "../services/api";
-import type { AnalyticsDetail, AnalyticsSlot, RunResult, Stream, Video } from "../types/api";
+import type { AnalyticsDetail, AnalyticsSlot, ClockTz, RunResult, Stream, Video } from "../types/api";
 import {
-  ConfirmDialog, CopyButton, copyText, ErrorBox, Modal, Pill, Skeleton, Spinner, StatusBadge, useToast, WarnBox,
+  ConfirmDialog, CopyButton, ErrorBox, Modal, MoreMenu, Pill, Skeleton, Spinner, StatusBadge, WarnBox, copyText, useToast,
 } from "../components/common";
 import { isVideoFile, useUploads } from "../components/UploadQueue";
-import { queueText } from "../components/StreamsTable";
+import { codeTone } from "../components/Naming";
+import { queueText, StreamsTable } from "../components/StreamsTable";
 import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
-import { blockedShape, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
+import { videoProblems } from "../lib/libraryFilters";
+import { blockedShape, ClockField, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
+import { Section, Segmented, videoChips } from "../components/FormParts";
 import {
-  CameraIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, SearchIcon, StopIcon,
-  TrashIcon, UploadIcon,
+  CameraIcon, ChevronIcon, CopyIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, SearchIcon, StopIcon, TrashIcon, UploadIcon,
 } from "../components/icons";
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "camera";
@@ -25,7 +27,7 @@ const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").repla
 export function AnalyticsPage() {
   const addr = useRtspAddress();
   const id = Number(useParams().id);
-  const { user, videos, refreshAnalytics, refreshStreams, refreshVideos } = useRig();
+  const { user, refreshAnalytics, refreshStreams, refreshVideos } = useRig();
   const toast = useToast();
   const { enqueue } = useUploads();
   const { data, error, loading, refresh } = usePolling(() => api.analytics(id), 2000, [id]);
@@ -36,6 +38,10 @@ export function AnalyticsPage() {
   const [confirmStop, setConfirmStop] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const changed = () => { refresh(); refreshAnalytics(); refreshStreams(); refreshVideos(); };
+  // Videos (the cards, as always) | Streams (this analytics' streams in the full Streams list: select, bulk, table)
+  const [params, setParams] = useSearchParams();
+  const tab: "videos" | "streams" = params.get("tab") === "streams" ? "streams" : "videos";
+  const navigate = useNavigate();
 
   /** Add library videos to this analytics (each once; repeats are skipped by the server). */
   const addVideos = async (ids: number[], label: string) => {
@@ -53,13 +59,13 @@ export function AnalyticsPage() {
     if (!vids.length) { toast("bad", "Those are not video files."); return; }
     if (vids.length < files.length) toast("info", `${files.length - vids.length} non-video file(s) skipped.`);
     for (const f of vids) {
-      // Already in the shared library (same name and size): add that one instead of uploading again.
-      const same = videos?.find((x) => x.filename === f.name && x.size_bytes === f.size);
-      if (same) { addVideos([same.id], `${f.name} (already in the library)`); continue; }
       setUploading((u) => [...u, f.name]);
       const done = () => setUploading((u) => { const i = u.indexOf(f.name); return i < 0 ? u : [...u.slice(0, i), ...u.slice(i + 1)]; });
+      // the queue checks the CONTENT first: a video already in the library is added here instead of uploaded again
       enqueue([f], async (video: Video) => { done(); await addVideos([video.id], video.filename); },
-        (message) => { done(); toast("bad", `${f.name}: ${message}`); });
+        (message) => { done(); if (message !== "Upload cancelled.") toast("bad", `${f.name}: ${message}`); },
+        { what: data?.code ?? undefined },
+        (same) => { done(); addVideos([same.id], `${same.filename} (already in the library)`); });
     }
   };
   const onDrop = (e: DragEvent) => {
@@ -144,7 +150,18 @@ export function AnalyticsPage() {
         </div>
       </div>
 
-      {data.slots.length === 0 && uploading.length === 0 ? (
+      <div className="flex gap-1 border-b border-line" role="tablist" aria-label={`${data.name} views`}>
+        {([["videos", `Videos (${data.slots.length})`], ["streams", `Streams (${data.streams})`]] as const).map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={tab === k} onClick={() => setParams(k === "videos" ? {} : { tab: k }, { replace: true })}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? "border-brand text-brand" : "border-transparent text-muted hover:text-fg"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "streams" ? (
+        <AnalyticsStreams slotIds={new Set(data.slots.map((sl) => sl.id))} onOpen={(sid) => navigate(`/streams/${sid}`)} onChanged={changed} />
+      ) : data.slots.length === 0 && uploading.length === 0 ? (
         <div className="card flex flex-col items-center gap-3 px-6 py-12 text-center" data-testid="analytics-empty">
           <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-soft text-brand"><FilmIcon className="h-6 w-6" /></span>
           <div>
@@ -163,9 +180,10 @@ export function AnalyticsPage() {
           )}
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          <h2 className="sr-only">Videos of {data.name}</h2>
           {data.slots.map((sl) => (
-            <SlotCard key={sl.id} slot={sl} analyticsName={data.name} canWrite={user.can_write} onChanged={changed} />
+            <SlotCard key={sl.id} slot={sl} analyticsName={data.name} code={data.code ?? undefined} canWrite={user.can_write} onChanged={changed} />
           ))}
           {uploading.map((name, i) => (
             <div key={`${name}-${i}`} className="card relative min-h-[12rem] overflow-hidden" data-testid="analytics-uploading">
@@ -190,18 +208,29 @@ export function AnalyticsPage() {
   );
 }
 
+/** The streams of one analytics in the full Streams list (cards or table, select all, start/stop, ⋯). */
+function AnalyticsStreams({ slotIds, onOpen, onChanged }: { slotIds: Set<number>; onOpen: (id: number) => void; onChanged: () => void }) {
+  const { streams, user, mediamtx } = useRig();
+  const mine = (streams ?? []).filter((s) => s.slot_id != null && slotIds.has(s.slot_id));
+  if (!mine.length) {
+    return <div className="card p-8 text-center text-sm text-muted">No streams yet. Open the Videos tab and press <b>New stream</b> on a video.</div>;
+  }
+  return <StreamsTable streams={mine} user={user} onSelect={(s) => onOpen(s.id)} onChanged={onChanged}
+    mediamtxDown={mediamtx?.state === "DOWN"} />;
+}
+
 function PageSkeleton() {
   return (
     <div className="space-y-4">
       <Skeleton className="h-8 w-64" />
       <Skeleton className="h-5 w-96" />
-      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-64" />)}</div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-64" />)}</div>
     </div>
   );
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: "ok" | "bad" }) {
-  const color = tone === "ok" ? "text-emerald-600 dark:text-emerald-400" : tone === "bad" ? "text-red-600 dark:text-red-400" : "";
+  const color = tone === "ok" ? "text-emerald-700 dark:text-emerald-400" : tone === "bad" ? "text-red-600 dark:text-red-400" : "";
   return (
     <div className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm">
       <span className="text-muted">{label}</span> <b className={`tabular-nums ${color}`}>{value}</b>
@@ -225,8 +254,16 @@ function Header({ data, canWrite, onSaved }: { data: AnalyticsDetail; canWrite: 
   };
   return (
     <div>
-      <div className="text-sm text-muted">{data.category.name} ›</div>
-      <h1 className="text-2xl font-bold tracking-tight">{data.name}</h1>
+      <nav className="text-sm text-muted" aria-label="Breadcrumb">
+        <Link to="/" className="hover:text-brand hover:underline">Overview</Link> › {data.category.name} ›
+      </nav>
+      <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-tight">
+        {data.name}
+        {data.code && (
+          <span className={`rounded-md px-2 py-0.5 font-mono text-sm font-bold ring-1 ring-inset ${codeTone(data.code)}`}
+            title={`Videos for this analytics are named ${data.code}_WHERE_NN (see Naming guide)`}>{data.code}</span>
+        )}
+      </h1>
       {editing ? (
         <div className="mt-2 max-w-2xl space-y-2">
           <textarea className="input min-h-[4rem]" value={desc} onChange={(e) => setDesc(e.target.value)} autoFocus
@@ -251,12 +288,12 @@ function Header({ data, canWrite, onSaved }: { data: AnalyticsDetail; canWrite: 
 }
 
 // ------------------------------------------------------------------ video card
-function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
-  slot: AnalyticsSlot; analyticsName: string; canWrite: boolean; onChanged: () => void;
+function SlotCard({ slot, analyticsName, code, canWrite, onChanged }: {
+  slot: AnalyticsSlot; analyticsName: string; code?: string; canWrite: boolean; onChanged: () => void;
 }) {
   const toast = useToast();
   const { enqueue } = useUploads();
-  const { videos, config } = useRig();
+  const { config } = useRig();
   const fileInput = useRef<HTMLInputElement>(null);
   const [dialog, setDialog] = useState<null | "edit" | "pick" | "run" | "remove">(null);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -266,14 +303,6 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
   const attachUpload = (files: File[]) => {
     const f = files.find(isVideoFile);
     if (!f) { toast("bad", "That is not a video file."); return; }
-    // Already on the server (same name and size): use it instead of uploading again.
-    const same = videos?.find((x) => x.filename === f.name && x.size_bytes === f.size);
-    if (same) {
-      api.updateSlot(slot.id, { video_id: same.id })
-        .then(() => { toast("ok", `${f.name} is already on the server; attached it to '${slot.title}'.`); onChanged(); })
-        .catch((e) => toast("bad", (e as ApiError).message));
-      return;
-    }
     setUploading(f.name);
     enqueue([f], async (video: Video) => {
       setUploading(null);
@@ -282,7 +311,13 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
       onChanged();
     }, (message) => {
       setUploading(null);
-      toast("bad", `${f.name}: ${message}`);
+      if (message !== "Upload cancelled.") toast("bad", `${f.name}: ${message}`);
+    }, { what: code }, (same) => {
+      // same content already in the library (any name): use it instead of uploading again
+      setUploading(null);
+      api.updateSlot(slot.id, { video_id: same.id })
+        .then(() => { toast("ok", `Attached '${same.filename}' to '${slot.title}'.`); onChanged(); })
+        .catch((e) => toast("bad", (e as ApiError).message));
     });
   };
   // Only an empty (older) card takes a dropped file itself; on a card with a video the drop goes to the
@@ -331,27 +366,26 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
       )}
 
       {/* text */}
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-1 flex-col gap-2 p-3">
         <div>
           <div className="flex items-start gap-2">
-            <h3 className="min-w-0 flex-1 font-semibold leading-snug">{slot.title}</h3>
+            <h3 className="min-w-0 flex-1 truncate font-semibold leading-snug" title={slot.title}>{slot.title}</h3>
             {canWrite && (
-              <div className="flex shrink-0 gap-0.5">
-                <button className="btn-ghost p-1" title="Edit title and notes" aria-label="Edit" onClick={() => setDialog("edit")}><EditIcon className="h-3.5 w-3.5" /></button>
-                <button className="btn-ghost p-1" title="Remove from this analytics (the video stays in the shared library)"
-                  aria-label="Remove from this analytics" onClick={() => setDialog("remove")}><TrashIcon className="h-3.5 w-3.5" /></button>
-              </div>
+              <MoreMenu label={`More for ${slot.title}`} items={[
+                { label: slot.description ? "Edit title and notes" : "Add notes", icon: <EditIcon className="h-4 w-4" />, onClick: () => setDialog("edit") },
+                { label: "Replace video", icon: <FilmIcon className="h-4 w-4" />, onClick: () => setDialog("pick") },
+                { label: "Remove from this analytics", icon: <TrashIcon className="h-4 w-4" />, danger: true, onClick: () => setDialog("remove"),
+                  title: "The video stays in the shared library" },
+              ]} />
             )}
           </div>
-          {slot.description
-            ? <p className="mt-1 whitespace-pre-line text-sm text-muted">{slot.description}</p>
-            : canWrite && <button className="mt-1 text-sm italic text-subtle hover:text-brand" onClick={() => setDialog("edit")}>Add notes…</button>}
+          {slot.description && <p className="mt-0.5 line-clamp-2 whitespace-pre-line text-xs text-muted" title={slot.description}>{slot.description}</p>}
           {v && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted">
-              <span className="truncate font-mono" title={v.rel_path}>{v.filename}</span>
-              <span>·</span><span>{v.video_codec?.toUpperCase()}{v.fps ? ` ${Math.round(v.fps * 100) / 100} fps` : ""}</span>
-              <span>·</span><span>{formatBytes(v.size_bytes)}</span>
-              {v.compat_mode === "transcode" && <Pill tone="warn" title={v.compat_reasons.join("; ")}>needs transcoding</Pill>}
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+              <span className="min-w-0 max-w-full truncate font-mono" title={v.rel_path}>{v.filename}</span>
+              <span>{v.video_codec?.toUpperCase()}{v.fps ? ` ${Math.round(v.fps * 100) / 100} fps` : ""} · {formatBytes(v.size_bytes)}</span>
+              {videoProblems(v).length > 0 && <Pill tone="warn" title={videoProblems(v).map((x) => x.text).join("\n")}>
+                {videoProblems(v).length === 1 ? videoProblems(v)[0].short : `${videoProblems(v).length} issues`}</Pill>}
               {v.compat_mode === "reject" && <Pill tone="bad" title={v.compat_reasons.join("; ")}>not supported</Pill>}
               {v.status !== "READY" && <Pill tone="bad" title={v.error ?? ""}>{v.status.toLowerCase()}</Pill>}
             </div>
@@ -383,10 +417,10 @@ function SlotCard({ slot, analyticsName, canWrite, onChanged }: {
             <p className="text-xs text-muted">Not 16:9 ({SHAPE_TEXT[v.shape ?? "other"]}): streams must be 16:9.</p>
           </div>
         ) : (
-          <div className="mt-auto">
-            <button className="btn-primary w-full" disabled={v.status !== "READY" || v.compat_mode === "reject"}
-              onClick={() => setDialog("run")}>
-              <CameraIcon /> Run RTSP{slot.streams.length ? " (more cameras)" : ""}
+          <div className="mt-auto pt-1">
+            <button className={slot.streams.length ? "btn-secondary btn-xs" : "btn-primary btn-xs"} disabled={v.status !== "READY" || v.compat_mode === "reject"}
+              onClick={() => setDialog("run")} title={slot.streams.length ? "Another RTSP camera from this video" : "Publish this video as an RTSP camera"}>
+              <CameraIcon className="h-3.5 w-3.5" /> New stream
             </button>
           </div>
         ))}
@@ -457,9 +491,9 @@ function StreamRow({ s, canWrite, onChanged }: { s: Stream; canWrite: boolean; o
   };
   const rt = s.runtime;
   return (
-    <li className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1.5 text-sm">
       <StatusBadge status={s.status} title={s.status_detail ?? s.last_error} />
-      <Link to={`/streams/${s.id}`} className="font-mono font-medium hover:text-brand">{s.name}</Link>
+      <Link to={`/streams/${s.id}`} className="min-w-0 truncate font-mono font-medium hover:text-brand" title={s.name}>{s.name}</Link>
       <span className="flex items-center gap-1 text-xs text-muted" title={`${rt.viewer_count} edge/RTSP viewer(s) now · peak today ${rt.viewer_peak_today}`}>
         <EyeIcon className="h-3.5 w-3.5" />{rt.viewer_count}
       </span>
@@ -473,8 +507,11 @@ function StreamRow({ s, canWrite, onChanged }: { s: Stream; canWrite: boolean; o
       {leadText(s) && canWrite && <GoButton s={s} onDone={onChanged} />}
       {queueText(s) && <span className="text-xs text-blue-700 dark:text-blue-300" title="Camera starts are kept 2 s apart">{queueText(s)}</span>}
       {rt.spacing_warning && <span className="text-xs text-amber-700 dark:text-amber-300" title={rt.spacing_warning}>clip too short for 2 s spacing</span>}
-      <div className="ml-auto flex items-center gap-1">
-        <CopyButton text={addr.url(s.rtsp_url)} label="Copy URL" />
+      <div className="ml-auto flex shrink-0 items-center">
+        <button className="btn-ghost btn-xs" title={`Copy ${addr.url(s.rtsp_url)}`} aria-label={`Copy URL of ${s.name}`}
+          onClick={async () => { if (await copyText(addr.url(s.rtsp_url))) toast("ok", "RTSP URL copied."); }}>
+          <CopyIcon className="h-3.5 w-3.5" />
+        </button>
         {canWrite && (
           live
             ? <button className="btn-ghost btn-xs" disabled={busy} onClick={() => act(() => api.action(s.id, "stop"), `${s.name} stopped`)} title="Stop"><StopIcon className="h-3.5 w-3.5" /></button>
@@ -586,7 +623,8 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
 }) {
   const addr = useRtspAddress();
   const { streams, system, config, user } = useRig();
-  const [outputSize, setOutputSize] = useState<string>(config?.output?.default ?? "original");
+  const [outputSize, setOutputSize] = useState<string>("original"); // same size as the file: no scaling unless asked
+  const [clock, setClock] = useState<{ on: boolean; tz: ClockTz }>({ on: false, tz: "IST" });
   const [countText, setCountText] = useState("1");
   const [lead, setLead] = useState<LeadInValue>({
     mode: config?.default_lead_in_mode ?? "fixed", seconds: config?.default_lead_in_s ?? 5, holdMax: null });
@@ -618,7 +656,8 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
     setErr(null);
     try {
       const r = await api.runSlot(slot.id, { count, name_prefix: prefix, start: start.trim() || null, end: end.trim() || null,
-        mode, start_now: startNow, force_transcode: fastStart, output_size: outputSize, ...leadInBody(lead) });
+        mode, start_now: startNow, force_transcode: fastStart, output_size: outputSize, ...leadInBody(lead),
+        ...(config?.features?.includes("clock_overlay") ? { clock: clock.on, clock_tz: clock.tz } : {}) });
       setResult(r);
       onDone();
     } catch (e) {
@@ -656,75 +695,114 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
     );
   }
 
+  const blocked = blockedShape(video, config?.output);
+  const canRun = !busy && !countErr && !startErr && !endErr && !prefixErr;
+  const why = countErr ? "Check the number of cameras" : prefixErr ? "Check the name prefix"
+    : startErr || endErr ? "Check the start / end time" : null;
+  const footer = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <p aria-live="polite" className={`mr-auto min-w-0 truncate text-sm ${why ? "text-red-600 dark:text-red-400" : "text-muted"}`}>
+        {why ?? `${count} stream${count > 1 ? "s" : ""}${startNow ? ", starting at once" : ", not started yet"}`}
+      </p>
+      <button className="btn-secondary" onClick={onClose}>Cancel</button>
+      <button className="btn-primary" disabled={!canRun} onClick={run}>
+        {busy ? <Spinner /> : <CameraIcon />} Create {count} stream{count > 1 ? "s" : ""}
+      </button>
+    </div>
+  );
+
   return (
-    <Modal title={`Run RTSP from '${slot.title}'`} onClose={onClose}>
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 rounded-lg bg-surface-2 p-2 text-sm">
-          <div className="h-10 w-16 shrink-0 overflow-hidden rounded bg-slate-900">
-            {video.thumbnail_url && <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate font-medium">{video.filename}</div>
-            <div className="text-xs text-muted">{formatTime(video.duration_s, false)} · {video.width}×{video.height}</div>
-          </div>
+    <Modal title={`New stream from '${slot.title}'`} subtitle={analyticsName} onClose={onClose} wide footer={footer}>
+      <div className="grid gap-x-7 gap-y-6 md:grid-cols-[minmax(0,1fr)_16rem]">
+        <div className="min-w-0 space-y-7">
+          <Section title="Cameras">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-count">Number of cameras</label>
+                <input id="run-count" type="number" min={1} max={20} className={`input ${countErr ? "input-error" : ""}`}
+                  value={countText} onChange={(e) => setCountText(e.target.value)} />
+                <p className={`mt-1 text-xs ${countErr ? "text-red-600" : "text-muted"}`}>
+                  {countErr ?? (room !== null ? `Room for ${Math.max(0, room)} more running stream(s) on this server.` : "1 to 20")}
+                </p>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-prefix">Name prefix</label>
+                <input id="run-prefix" className={`input font-mono ${prefixErr ? "input-error" : ""}`} value={prefix}
+                  onChange={(e) => setPrefix(e.target.value)} autoComplete="off" spellCheck={false} />
+                <p className={`mt-1 text-xs ${prefixErr ? "text-red-600" : "text-muted"}`}>{prefixErr ?? "Streams are named prefix-1, prefix-2, …"}</p>
+              </div>
+            </div>
+          </Section>
+
+          <Section title="What plays" aside={`File length ${formatTime(video.duration_s, false)}`}>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-start">Start at (optional)</label>
+                <input id="run-start" className={`input font-mono ${startErr ? "input-error" : ""}`} value={start}
+                  onChange={(e) => setStart(e.target.value)} placeholder="00:00:00" />
+                <p className={`mt-1 text-xs ${startErr ? "text-red-600" : "text-muted"}`}>{startErr ?? "from the beginning if empty"}</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg" htmlFor="run-end">End at (optional)</label>
+                <input id="run-end" className={`input font-mono ${endErr ? "input-error" : ""}`} value={end}
+                  onChange={(e) => setEnd(e.target.value)} placeholder="end of video" />
+                <p className={`mt-1 text-xs ${endErr ? "text-red-600" : "text-muted"}`}>{endErr ?? "to the end if empty"}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Segmented name="run-mode" ariaLabel="Playback" value={mode} onChange={setMode}
+                options={[{ value: "loop", label: "Loop forever" }, { value: "once", label: "Play once" }]} />
+              <label className="ml-auto flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} /> Start now
+              </label>
+            </div>
+          </Section>
+
+          <Section title="Output">
+            {blocked && (
+              <WarnBox>This video is {SHAPE_TEXT[video.shape ?? "other"]}, not 16:9, so it can't be streamed. Make a 16:9 copy
+                in the shared library (blurred bars, black bars or crop), then add the copy to this analytics.</WarnBox>
+            )}
+            <OutputSizeField out={config?.output} video={video} value={outputSize} onChange={setOutputSize}
+              isAdmin={!!user?.is_admin} idPrefix="run" />
+            {outputPlan(video, outputSize, config?.output) !== "live" &&
+              <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />}
+            <ClockField config={config} value={clock.on} tz={clock.tz} onChange={(on, tz) => setClock({ on, tz })} idPrefix="run" />
+          </Section>
+
+          <details className="group rounded-lg ring-1 ring-inset ring-line [&_summary::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2.5 text-sm hover:bg-surface-2">
+              <ChevronIcon className="h-4 w-4 text-muted transition-transform group-open:rotate-90" />
+              <span className="font-medium text-fg">Advanced</span>
+              <span className="truncate text-xs text-muted">Lead-in: {lead.mode === "none" ? "none"
+                : lead.mode === "hold" ? `until a viewer, then ${lead.seconds} s` : `${lead.seconds} s slate`}</span>
+            </summary>
+            <div className="border-t border-line px-3 py-3">
+              <div className="mb-1 text-sm font-medium text-fg">Lead-in (before the video)</div>
+              <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
+            </div>
+          </details>
+          {err && <ErrorBox>{err}</ErrorBox>}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+
+        <aside aria-label="Summary" className="min-w-0 space-y-4 md:sticky md:top-4 md:self-start">
+          <div className="overflow-hidden rounded-lg ring-1 ring-inset ring-line">
+            <div className="flex aspect-video items-center justify-center bg-slate-900">
+              {video.thumbnail_url ? <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                : <span className="text-xs text-slate-400">no picture</span>}
+            </div>
+            <div className="space-y-1.5 p-2.5">
+              <div className="truncate text-sm font-medium" title={video.filename}>{video.filename}</div>
+              <div className="flex flex-wrap gap-1">{videoChips(video, blocked ? "not 16:9" : null)}</div>
+            </div>
+          </div>
           <div>
-            <label className="label" htmlFor="run-count">Number of cameras</label>
-            <input id="run-count" type="number" min={1} max={20} className={`input ${countErr ? "input-error" : ""}`}
-              value={countText} onChange={(e) => setCountText(e.target.value)} />
-            {countErr && <p className="mt-1 text-xs text-red-600">{countErr}</p>}
-            {room !== null && <p className="mt-1 text-xs text-muted">Room for {Math.max(0, room)} more running stream(s) on this server.</p>}
+            <h3 className="mb-1.5 text-sm font-semibold text-fg">Streams to create</h3>
+            <div className="flex flex-wrap gap-1">
+              {names.map((n) => <span key={n} className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs ring-1 ring-inset ring-line">{n}</span>)}
+            </div>
           </div>
-          <div>
-            <label className="label" htmlFor="run-prefix">Name prefix</label>
-            <input id="run-prefix" className={`input font-mono ${prefixErr ? "input-error" : ""}`} value={prefix}
-              onChange={(e) => setPrefix(e.target.value)} />
-            {prefixErr && <p className="mt-1 text-xs text-red-600">{prefixErr}</p>}
-          </div>
-          <div>
-            <label className="label" htmlFor="run-start">Start at (optional)</label>
-            <input id="run-start" className={`input font-mono ${startErr ? "input-error" : ""}`} value={start}
-              onChange={(e) => setStart(e.target.value)} placeholder="00:00:00" />
-            {startErr && <p className="mt-1 text-xs text-red-600">{startErr}</p>}
-          </div>
-          <div>
-            <label className="label" htmlFor="run-end">End at (optional)</label>
-            <input id="run-end" className={`input font-mono ${endErr ? "input-error" : ""}`} value={end}
-              onChange={(e) => setEnd(e.target.value)} placeholder="end of video" />
-            {endErr && <p className="mt-1 text-xs text-red-600">{endErr}</p>}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex items-center gap-2"><input type="radio" checked={mode === "loop"} onChange={() => setMode("loop")} /> Loop forever</label>
-          <label className="flex items-center gap-2"><input type="radio" checked={mode === "once"} onChange={() => setMode("once")} /> Play once</label>
-          <label className="ml-auto flex items-center gap-2"><input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} /> Start now</label>
-        </div>
-        <div>
-          <span className="label">Lead-in (before the video)</span>
-          <LeadInFields value={lead} onChange={setLead} idPrefix="run-lead" />
-        </div>
-        {blockedShape(video, config?.output) && (
-          <WarnBox>This video is {SHAPE_TEXT[video.shape ?? "other"]}, not 16:9, so it can't be streamed. Make a 16:9 copy
-            in the shared library (blurred bars, black bars or crop), then add the copy to this analytics.</WarnBox>
-        )}
-        <OutputSizeField out={config?.output} video={video} value={outputSize} onChange={setOutputSize}
-          isAdmin={!!user?.is_admin} idPrefix="run" />
-        {outputPlan(video, outputSize, config?.output) !== "live" &&
-          <FastStartNotice video={video} checked={fastStart} onChange={setFastStart} />}
-        <div>
-          <div className="label">Streams to create</div>
-          <div className="flex flex-wrap gap-1">
-            {names.map((n) => <span key={n} className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">{n}</span>)}
-          </div>
-        </div>
-        {err && <ErrorBox>{err}</ErrorBox>}
-        <div className="flex justify-end gap-2">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={busy || !!countErr || !!startErr || !!endErr || !!prefixErr} onClick={run}>
-            {busy ? <Spinner /> : <CameraIcon />} Create {count} stream{count > 1 ? "s" : ""}
-          </button>
-        </div>
+        </aside>
       </div>
     </Modal>
   );

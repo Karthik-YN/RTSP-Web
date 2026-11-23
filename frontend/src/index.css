@@ -5,14 +5,14 @@
 /* Design tokens (RGB triplets). Light is default; .dark overrides. */
 :root {
   --bg: 243 245 249; --surface: 255 255 255; --surface-2: 247 248 251; --line: 226 231 239;
-  --fg: 15 23 42; --muted: 71 85 105; --subtle: 140 152 172;
-  --brand: 37 99 235; --brand-strong: 29 78 216; --brand-soft: 219 234 254; --brand-fg: 255 255 255;
+  --fg: 15 23 42; --muted: 71 85 105; --subtle: 98 111 133;  /* subtle: ≥ 4.5:1 on every background (WCAG AA) */
+  --brand: 29 78 216; --brand-strong: 30 64 175; --brand-soft: 219 234 254;  /* blue text ≥ 5.4:1 on its soft chips */ --brand-fg: 255 255 255;
   color-scheme: light;
 }
 .dark {
   --bg: 9 13 22; --surface: 17 23 36; --surface-2: 23 31 47; --line: 38 49 69;
-  --fg: 228 233 241; --muted: 156 167 186; --subtle: 103 117 140;
-  --brand: 96 165 250; --brand-strong: 59 130 246; --brand-soft: 23 37 84; --brand-fg: 255 255 255;
+  --fg: 228 233 241; --muted: 156 167 186; --subtle: 132 146 168;  /* ≥ 5:1 on dark surfaces */
+  --brand: 96 165 250; --brand-strong: 37 99 235; --brand-soft: 23 37 84;  /* white on buttons ≥ 5:1 */ --brand-fg: 255 255 255;
   color-scheme: dark;
 }
 
@@ -44,4 +44,12 @@
     .input { min-height: 2.5rem; }
   }
   .skeleton::after { content: ""; @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/5; animation: shimmer 1.4s infinite; }
+}
+
+/* Touch screens (phones, tablets): finger-sized targets (~40 px) without changing the desktop look. */
+@media (pointer: coarse) {
+  .btn, .btn-xs { min-height: 2.5rem; }
+  .btn-xs { padding-left: 0.75rem; padding-right: 0.75rem; }
+  input[type="checkbox"], input[type="radio"] { min-width: 1.25rem; min-height: 1.25rem; }
+  [role="menuitem"] { min-height: 2.75rem; }
 }

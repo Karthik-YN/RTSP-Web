@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from .. import __version__
 from ..models import DesiredState, Stream, StreamStatus
 from ..schemas import EventOut, MessageOut
 from ..services.auth import User
+from ..services.encoders import INFO as ENC_INFO
 from ..services.ffprobe_service import ffmpeg_version
 from ..services.mediamtx_service import UP
 from ..services.network_info import interface_addresses
@@ -50,13 +54,17 @@ def config(request: Request, ctx: Context = Depends(get_ctx), _: User = Depends(
         "max_transcode_streams": ctx.supervisor.max_transcode(),
         "transcode_policy": s.transcode_policy,
         "copy_codecs": s.copy_codecs, "copy_pix_fmts": s.copy_pix_fmts, "copy_profiles": s.copy_profiles,
-        "output_profile": {"codec": "h264", "encoder": "libx264", "profile": s.x264_profile,
+        "output_profile": {"codec": "h264", "encoder": ENC_INFO[ctx.supervisor.encoders.active()]["encoder"],
+                           "profile": s.x264_profile,
                            "preset": s.x264_preset, "gop_seconds": s.x264_gop_seconds,
                            "max": f"{s.transcode_max_width}x{s.transcode_max_height}",
                            "fps_mode": s.output_fps_mode},
         "output": {"width": s.output_width, "height": s.output_height, "default": s.output_default,
                    "sizes": s.standard_sizes, "require_16_9": s.require_16_9},
         "preview": {"threshold_s": s.preview_threshold_s, "seconds": s.preview_seconds},
+        # features this server has (the dashboard shows their controls only when listed)
+        "features": ["clock_overlay", "codecs", "naming", "duplicate_check"],
+        "clock": {"zones": ["IST", "UTC"], "default": "IST"},
         "min_segment_s": s.min_segment_s,
         "allowed_extensions": s.allowed_extensions,
         "upload_max_bytes": s.upload_max_bytes,
@@ -66,6 +74,35 @@ def config(request: Request, ctx: Context = Depends(get_ctx), _: User = Depends(
         "ffmpeg_version": ffmpeg_version(s.ffmpeg_bin),
         "warnings": warnings,
     }
+
+
+class EncoderIn(BaseModel):
+    choice: Literal["auto", "cpu", "nvidia", "intel", "vaapi"] | None = None  # None = back to the default
+
+
+@router.get("/api/system/encoders")
+def get_encoders(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
+    """Encoders for live transcoding on this machine: which work, which one is used, and the choice."""
+    return ctx.supervisor.encoders.view()
+
+
+@router.put("/api/system/encoders")
+def set_encoder(body: EncoderIn, ctx: Context = Depends(get_ctx), user: User = Depends(require_operator)):
+    """Choose the encoder (auto/cpu/nvidia/intel/vaapi). New and restarted transcoding streams use it."""
+    enc = ctx.supervisor.encoders
+    ctx.supervisor.limits.set_str("encoder", body.choice, user.username)
+    view = enc.view()
+    ctx.events.add("settings.encoder", f"encoder choice: {view['choice']} (using {view['active_label']})",
+                   username=user.username)
+    return view
+
+
+@router.post("/api/system/encoders/detect")
+async def detect_encoders(ctx: Context = Depends(get_ctx), _: User = Depends(require_operator)):
+    """Test every encoder again (e.g. after passing a GPU into the container)."""
+    import asyncio
+    await asyncio.to_thread(ctx.supervisor.encoders.detect)
+    return ctx.supervisor.encoders.view()
 
 
 @router.get("/api/system")
@@ -201,3 +238,11 @@ def metrics(ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
     m("video_disk_free_bytes", "Free space on the video disk", "gauge", [("", vd.get("free", 0))])
     m("ffmpeg_processes", "Running FFmpeg publishers", "gauge", [("", smp.get("ffmpeg_processes", 0))])
     return "\n".join(out) + "\n"
+
+
+@router.get("/api/system/time")
+def server_time(_: User = Depends(current_user)):
+    """The server's clock (ms), for the dashboard's rig clock: compare it with a phone/laptop clock or a camera
+    picture. The dashboard measures the round trip and corrects for half of it."""
+    import time as _t
+    return {"epoch_ms": round(_t.time() * 1000, 1)}

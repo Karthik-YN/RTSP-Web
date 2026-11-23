@@ -145,6 +145,19 @@ def test_progress_exact_period_from_measurement():
     assert p.loops_completed(9.1 - 3.336667) == 40
 
 
+def test_progress_out_time_now_extrapolates_report_age():
+    from datetime import datetime, timedelta, timezone
+    p = Progress()
+    t0 = datetime(2026, 11, 22, 12, 0, 0, tzinfo=timezone.utc)
+    p.load({"out_time_us": "100000000", "updated_at": t0.isoformat()})
+    assert p.out_time_now(t0) == 100.0
+    assert abs(p.out_time_now(t0 + timedelta(seconds=0.7)) - 100.7) < 1e-9  # report is 0.7 s old
+    assert p.out_time_now(t0 + timedelta(seconds=30)) == 101.5  # stalled publisher: capped
+    assert p.out_time_now(t0 - timedelta(seconds=1)) == 100.0  # clock skew: never behind the report
+    assert p.out_time_s == 100.0 and p.loops_completed(30.0) == 3  # loop counting unchanged
+    assert Progress().out_time_now() == 0.0
+
+
 def test_log_sink_rotation_and_noise_suppression(tmp_path):
     sink = LogSink(tmp_path / "s.log", max_bytes=2000, backups=2, tail=50)
     for i in range(200):

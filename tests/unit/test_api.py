@@ -162,7 +162,8 @@ def test_viewer_can_play_and_download(auth_rig):
 
 # ------------------------------------------------------------------ uploads
 def test_upload_streaming_success(rig, fixtures_dir):
-    data = (fixtures_dir / "h264_2997.mp4").read_bytes()
+    # a few extra bytes: the library already holds this fixture, and the same content is refused as a duplicate
+    data = (fixtures_dir / "h264_2997.mp4").read_bytes() + b"unique-upload-1"
     pre = rig.client.post("/api/videos/upload/check", json={"filename": "new clip.mp4", "size": len(data)})
     assert pre.status_code == 200 and pre.json()["ok"] is True
     r = rig.client.post("/api/videos/upload?filename=new clip.mp4", content=data,
@@ -175,6 +176,28 @@ def test_upload_streaming_success(rig, fixtures_dir):
     r = rig.client.post("/api/videos/upload?filename=new clip.mp4", content=b"x" * 10)
     assert r.status_code == 409
     assert (rig.video_dir / "new clip.mp4").read_bytes() == data
+
+
+def test_duplicate_upload_is_refused_by_content_not_name(rig, fixtures_dir):
+    import hashlib
+    data = (fixtures_dir / "h264_2997.mp4").read_bytes() + b"unique-upload-2"
+    assert rig.client.post("/api/videos/upload?filename=first.mp4", content=data,
+                           headers={"content-type": "application/octet-stream"}).status_code == 201
+    first = next(v for v in rig.client.get("/api/videos").json() if v["filename"] == "first.mp4")
+    # the same fingerprint the dashboard computes in the browser
+    h = hashlib.sha256(str(len(data)).encode() + data[:1 << 20] + (data[-(1 << 20):] if len(data) > 2 << 20 else b"")).hexdigest()
+    assert first["quick_hash"] == h
+    pre = rig.client.post("/api/videos/upload/check", json={"filename": "renamed copy.mp4", "size": len(data), "quick_hash": h}).json()
+    assert pre["duplicate_of"]["rel_path"] == "first.mp4"
+    # uploading it anyway under another name: refused, nothing stored
+    r = rig.client.post("/api/videos/upload?filename=renamed copy.mp4", content=data,
+                        headers={"content-type": "application/octet-stream"})
+    assert r.status_code == 409 and "Duplicate video" in r.text and "first.mp4" in r.text
+    assert not (rig.video_dir / "renamed copy.mp4").exists()
+    assert list((rig.video_dir / ".uploads").iterdir()) == []
+    # a different video under any name is fine
+    other = rig.client.post("/api/videos/upload/check", json={"filename": "x.mp4", "size": len(data), "quick_hash": "0" * 64}).json()
+    assert other.get("duplicate_of") is None
 
 
 def test_upload_rejections(rig):

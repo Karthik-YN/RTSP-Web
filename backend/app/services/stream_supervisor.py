@@ -37,11 +37,12 @@ from ..models import DesiredState, StatusHistory, Stream, StreamStatus, Video, V
 from . import compatibility
 from .errors import CapacityExceeded, Conflict, Invalid, NotFound
 from .events import EventLog
-from .ffmpeg_manager import (LogSink, PublishPlan, PublisherProcess, build_command, loop_entries,
-                             transcode_args, write_playlist)
+from .ffmpeg_manager import (write_clock_text, LogSink, PublishPlan, PublisherProcess, build_command, loop_entries, point_link,
+                             source_link, transcode_args, write_playlist)
 from .ffprobe_service import ProbeError, keyframe_at_or_before, video_end_time
 from .file_manager import LibraryError, describe_change, fingerprint, public_error
 from .mediamtx_service import DOWN, UP, MediaMTXService
+from .encoders import EncoderService
 from .runtime_settings import RuntimeSettings
 from .shape import SHAPE_LABEL, parse_size, video_shape
 from .slate_service import SlateService, SlateSpec, fps_text_of, profile_of
@@ -56,6 +57,9 @@ ACTIVE_STATUSES = {StreamStatus.STARTING, StreamStatus.RUNNING, StreamStatus.RES
 LEAD_IN_STATUSES = {StreamStatus.LEAD_IN, StreamStatus.WAITING_FOR_VIEWER}
 
 
+CLOCK_TZ = {"IST": 19800, "UTC": 0}  # seconds east of UTC, for the server clock drawn on frames
+
+
 @dataclass
 class StreamConfig:
     video_id: int
@@ -67,6 +71,9 @@ class StreamConfig:
     output_size: str = "original"
     # New streams and video changes must be 16:9; restarting an existing stream is not refused.
     enforce_shape: bool = True
+    # Server clock drawn on every frame (wall-clock time with ms when the frame leaves the rig); re-encodes.
+    clock: bool = False
+    clock_tz: str = "IST"  # IST | UTC
 
 
 @dataclass
@@ -111,6 +118,7 @@ class StreamSupervisor:
         self.events = events
         self.runtimes: dict[int, Runtime] = {}
         self.limits = RuntimeSettings(db, settings)
+        self.encoders = EncoderService(settings, self.limits)
         self._create_lock = asyncio.Lock()
         self._monitor_task: asyncio.Task | None = None
         self._start_sem = asyncio.Semaphore(settings.recovery_concurrency)
@@ -307,10 +315,16 @@ class StreamSupervisor:
             seg = validate_segment(cfg.start_s, cfg.end_s, video.duration_s, self.s.min_segment_s)
         except ValidationError as exc:
             raise Invalid(str(exc), {"field": exc.field})
-        compat = self.library.compat_for(self.library.meta_of(video), cfg.force_transcode or out_size is not None)
+        if cfg.clock_tz not in CLOCK_TZ:
+            raise Invalid("Clock time zone must be IST or UTC.", {"field": "clock_tz"})
+        compat = self.library.compat_for(self.library.meta_of(video),
+                                         cfg.force_transcode or out_size is not None or cfg.clock)
         if out_size is not None and compat.mode == compatibility.TRANSCODE:
             compat.warnings.append(f"Scaled to {out_size[0]}x{out_size[1]} live (costs CPU). Make a 720p copy in the "
                                    "library to stream it without transcoding.")
+        if cfg.clock:
+            compat.warnings.append(f"Server clock ({cfg.clock_tz}) drawn on every frame: the stream is re-encoded live "
+                                   "(about 1-2 CPU cores at 720p, 4 at 1080p) and counts toward the transcode limit.")
         compat.warnings[:0] = notes
         if compat.mode == compatibility.REJECT:
             raise Invalid("This video cannot be published: " + " ".join(compat.reasons),
@@ -361,6 +375,8 @@ class StreamSupervisor:
             "output_mode": compat.mode,
             "config_json": {
                 "output_size": cfg.output_size,
+                "clock": bool(cfg.clock),
+                "clock_tz": cfg.clock_tz,
                 "out_width": out_size[0] if out_size else None,
                 "out_height": out_size[1] if out_size else None,
                 "compat_reasons": compat.reasons,
@@ -573,7 +589,9 @@ class StreamSupervisor:
             fields = await self.prepare(StreamConfig(
                 video_id=row.video_id, start_s=row.start_offset_s, end_s=row.end_offset_s,
                 mode=row.playback_mode, force_transcode=bool(row.force_transcode),
-                output_size=(row.config_json or {}).get("output_size") or "original", enforce_shape=False))
+                output_size=(row.config_json or {}).get("output_size") or "original", enforce_shape=False,
+                clock=bool((row.config_json or {}).get("clock")),
+                clock_tz=(row.config_json or {}).get("clock_tz") or "IST"))
         except Invalid as exc:
             self._update(row.id, status=StreamStatus.ERROR, last_error=exc.message)
             raise
@@ -623,10 +641,15 @@ class StreamSupervisor:
             raise Invalid("The video's size is unknown, so no lead-in slate can be made for it.")
         fps_text = fps_text_of(video.fps_text if video else None, cfg.get("fps"))
         if row.output_mode == compatibility.TRANSCODE:
-            args = transcode_args(self._plan(row), self.s)
+            plan = self._plan(row)
+            plan.encoder = "cpu"  # the slate is always made with libx264; only its scale filter matters
+            plan.clock_tz = None  # a pre-rendered slate can't show a live clock (it shows its own running counter)
+            args = transcode_args(plan, self.s)
             scale = args[args.index("-vf") + 1] if "-vf" in args else None
             return SlateSpec(row.name, width, height, fps_text, self.s.x264_profile, scale)
-        return SlateSpec(row.name, width, height, fps_text, profile_of(video.video_profile if video else None))
+        codec = "hevc" if video is not None and (video.video_codec or "").lower() == "hevc" else "h264"
+        return SlateSpec(row.name, width, height, fps_text, profile_of(video.video_profile if video else None),
+                         codec=codec)
 
     async def _begin(self, rt: Runtime) -> None:
         """A user (or boot recovery) starts the stream: lead-in first if it has one.
@@ -772,6 +795,19 @@ class StreamSupervisor:
                 "viewer": lead.get("viewer"), "slate_style": lead.get("style")}
 
     # ================================================================ processes
+    def _encoder_for(self, row: Stream) -> str:
+        """The encoder this stream's publisher uses: the one it was started with while it runs (so a
+        change on the Health page doesn't restart running streams), otherwise the current choice."""
+        rt = self.runtimes.get(row.id)
+        pub = rt.publisher if rt else None
+        argv = (pub.argv or []) if pub is not None and pub.alive() else []
+        for enc, name in (("nvidia", "h264_nvenc"), ("intel", "h264_qsv"), ("vaapi", "h264_vaapi")):
+            if name in argv:
+                return enc
+        if "libx264" in argv:
+            return "cpu"
+        return self.encoders.active()
+
     def _plan(self, row: Stream) -> PublishPlan:
         cfg = row.config_json or {}
         start_time = float(cfg.get("container_start_time_s") or 0.0)
@@ -786,9 +822,48 @@ class StreamSupervisor:
             playlist_path=self.s.run_path / "streams" / str(row.id) / "playlist.ffconcat",
             fps=cfg.get("fps"), width=cfg.get("width"), height=cfg.get("height"),
             out_width=cfg.get("out_width"), out_height=cfg.get("out_height"),
+            encoder=self._encoder_for(row),
+            clock_tz=(cfg.get("clock_tz") or "IST") if cfg.get("clock") and row.output_mode == compatibility.TRANSCODE else None,
         )
         plan.entries = loop_entries(plan.period_s, self.s) if row.playback_mode == "loop" else 1
+        link = source_link(plan.playlist_path, path)
+        if plan.clock_tz:
+            write_clock_text(plan)
+        try:
+            point_link(link, path)
+            plan.input_path = link
+        except OSError as exc:  # no symlinks here (odd filesystem): read the file directly, renames then refuse
+            log.warning("stream %s: cannot create source link %s (%s); playlist uses the file path", row.id, link, exc)
         return plan
+
+    def follow_rename(self, stream_id: int, new_path) -> str | None:
+        """A video was renamed: point this stream's running publisher at ``new_path``. Caller holds rt.lock.
+
+        Returns None when done (or nothing runs), else why the running publisher cannot follow
+        (it reads the old path directly; restart the stream first).
+        """
+        why = self.uses_old_path(stream_id)
+        if why:
+            return why
+        rt = self.runtimes.get(stream_id)
+        if rt is None or rt.plan is None or not (rt.publisher and rt.publisher.alive()):
+            return None
+        point_link(rt.plan.input_path, new_path)
+        rt.plan.source_path = new_path
+        return None
+
+    def uses_old_path(self, stream_id: int) -> str | None:
+        """Dry-run of follow_rename: would this stream's running publisher be unable to follow a rename?"""
+        rt = self.runtimes.get(stream_id)
+        if rt is None or rt.plan is None or not (rt.publisher and rt.publisher.alive()):
+            return None
+        link = rt.plan.input_path
+        try:
+            if link is not None and str(link) in rt.plan.playlist_path.read_text():
+                return None
+        except OSError:
+            pass
+        return "its publisher reads the file path directly (started before this version); restart it first"
 
     async def _spawn(self, rt: Runtime, user_initiated: bool = False) -> None:
         """Start the publisher, through the start queue. Caller must hold rt.lock.
@@ -1433,7 +1508,7 @@ class StreamSupervisor:
             "process": proc_stats,
             "loop_count": loops if row.playback_mode == "loop" else 0,
             "loop_period_s": rt.plan.period_s if rt and rt.plan else (row.config_json or {}).get("period_s"),
-            "playback_position_s": (row.effective_start_s + (pub.progress.out_time_s % rt.plan.period_s))
+            "playback_position_s": (row.effective_start_s + (pub.progress.out_time_now() % rt.plan.period_s))
             if pub and rt and rt.plan and rt.plan.period_s > 0 else None,
             "waiting_for_mediamtx": bool(rt and rt.waiting_for_mediamtx),
             "consecutive_failures": rt.failures if rt else 0,

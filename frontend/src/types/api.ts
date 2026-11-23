@@ -69,6 +69,9 @@ export interface StreamRuntime {
 }
 
 export interface Stream {
+  /** server clock drawn on every frame (newer servers) */
+  clock?: boolean;
+  clock_tz?: ClockTz;
   id: number;
   name: string;
   rtsp_url: string;
@@ -132,6 +135,10 @@ export interface Video {
   audio_codec: string | null;
   bitrate_bps: number | null;
   keyframe_interval_s: number | null;
+  /** B-frames in the video (newer servers); real cameras have none. */
+  b_frames?: boolean | null;
+  /** Content fingerprint (newer servers); older ones expose its first 8 hex digits in thumbnail_url. */
+  quick_hash?: string;
   compat_mode: "copy" | "transcode" | "reject" | null;
   compat_reasons: string[];
   compat_warnings: string[];
@@ -163,6 +170,10 @@ export interface Video {
   analytics?: VideoAnalyticsLink[];
   thumbnail_url: string | null;
   streams_using: number;
+  /** naming convention parts of a conforming name (WHAT_WHERE_NN), else null */
+  name_parts?: { what: string; where: string; nn: number; tags: string[] } | null;
+  original_name?: string | null;
+  previous_names?: string[];
   updated_at: string;
   last_seen_at: string;
 }
@@ -294,6 +305,31 @@ export interface LimitInfo {
   max: number;
 }
 
+export type EncoderId = "cpu" | "nvidia" | "intel" | "vaapi";
+export type EncoderChoice = "auto" | EncoderId;
+
+export interface EncoderInfo {
+  id: EncoderId;
+  label: string;
+  encoder: string;
+  about: string;
+  available: boolean;
+  reason: string | null;
+  test_ms: number | null;
+}
+
+export interface Encoders {
+  choice: EncoderChoice;
+  active: EncoderId;
+  active_label: string;
+  note: string | null;
+  choices: EncoderChoice[];
+  encoders: EncoderInfo[];
+  checked_at: number | null;
+  default: EncoderChoice;
+  overridden: boolean;
+}
+
 export interface Capacity {
   max_active_streams: LimitInfo;
   max_transcode_streams: LimitInfo;
@@ -306,8 +342,12 @@ export interface RtspHost {
   network?: "tailscale" | null;
 }
 
+export type ClockTz = "IST" | "UTC";
+
 export interface AppConfig {
   version: string;
+  /** what this server supports (newer servers): "clock_overlay", "codecs", ... */
+  features?: string[];
   public_rtsp_host: string;
   public_rtsp_port: number;
   rtsp_hosts?: RtspHost[];
@@ -372,6 +412,8 @@ export interface UploadCheck {
   reserve: number;
   in_flight_uploads: number;
   available: number;
+  /** newer servers: the same video (same content) is already in the library */
+  duplicate_of?: { id: number; rel_path: string } | null;
 }
 
 export interface StreamHistory {
@@ -409,6 +451,8 @@ export interface AnalyticsCounts {
 export interface AnalyticsItem extends AnalyticsCounts {
   id: number;
   name: string;
+  /** WHAT code in video names, e.g. ALPR */
+  code?: string | null;
   description: string | null;
   sort: number;
   slots: number;
@@ -440,6 +484,7 @@ export interface AnalyticsSlot {
 export interface AnalyticsDetail extends AnalyticsCounts {
   id: number;
   name: string;
+  code?: string | null;
   description: string | null;
   category: { id: number; name: string };
   slots: AnalyticsSlot[];
@@ -471,3 +516,16 @@ export interface Conversion {
   created_at: string;
   finished_at: string | null;
 }
+
+export interface NamingCode { code: string; analytics_id: number | null; analytics: string; category: string | null }
+export interface NamingConvention {
+  format: string;
+  pattern: string;
+  where_max: number;
+  tags: string[];
+  mode: "enforce" | "warn" | "off";
+  codes: NamingCode[];
+  places: { where: string; videos: number; codes: string[] }[];
+  examples: { name: string; reads: string }[];
+}
+export interface RenameResult { video_id: number; old: string; new: string; streams: string[]; changed: boolean; video?: Video }

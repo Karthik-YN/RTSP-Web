@@ -26,7 +26,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from ..config import Settings
+from ..config import INTERNAL_READER, Settings
 
 log = logging.getLogger(__name__)
 
@@ -304,6 +304,8 @@ class MediaMTXService:
                 if str(rd.get("type", "")).startswith("hls"):
                     continue  # the dashboard preview is not a camera viewer
                 sess = sessions.get(rd.get("id"), {})
+                if INTERNAL_READER in str(sess.get("query") or ""):
+                    continue  # the app's own read (snapshot, health test, preview copy), not a viewer
                 readers.append({
                     "type": rd.get("type"), "id": rd.get("id"),
                     "remote_addr": sess.get("remoteAddr"),
