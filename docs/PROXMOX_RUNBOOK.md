@@ -274,7 +274,7 @@ Expected:
      python3 scripts/load_test.py --url http://192.168.29.105:8081 --rtsp-base rtsp://192.168.29.105:8555 --video-id <ID> --ramp … --readers 2
      ```
 
-   * `--apply` saves 80% of the last good level as the stream limit. It can be seen and changed on the Health page.
+   * `--apply` saves 80% of the last good level as the stream limit. It can be seen and changed on the System page (Health tab).
    * Ctrl-C at any time deletes the `loadtest_*` streams.
 
 3. **Copy the report out:**
@@ -353,10 +353,10 @@ Check from a phone on mobile data:
 | Task | How |
 |---|---|
 | Logs | `docker compose logs -f rig02` (rotated, 5 × 20 MB) |
-| Status | `docker compose ps`, plus the Health page (a quick check also runs every 10 min) |
+| Status | `docker compose ps`, plus the System page → Health (a quick check also runs every 10 min) |
 | Upgrade | New bundle → `git pull <bundle> feature/live-preview-and-launcher` → rollback point (phase 6) → `docker compose up -d --build` |
 | Rollback | `docker tag rig02-rtsp-manager:before-<commit> rig02-rtsp-manager:latest && docker compose up -d --no-build`. Restore the data `.tgz` only if the newer version migrated the database and the older one refuses it |
 | Backups | Database: daily inside the app, 14 kept, in the volume. Whole VM: the Proxmox backup job. Footage on `/srv/rig02`: copy it separately |
-| Disk | The dashboard and Health page warn early; delete unused copies from the library |
+| Disk | The dashboard and the System page warn early; delete unused copies from the library |
 
 Restarting the container (an upgrade, a Docker restart) restarts the streams; readers reconnect within seconds. Plan upgrades outside demo hours.

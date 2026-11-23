@@ -7,7 +7,8 @@ set -u
 BASE=${1:?base url}; MODE=${2:-readonly}; SECS=${SECS:-25}; EXTRA=${EXTRA:-1}
 HERE=$(cd "$(dirname "$0")" && pwd); OUT="$HERE/results"; mkdir -p "$OUT"; chmod 777 "$OUT"
 TS=$(date +%Y%m%d-%H%M%S)
-IMG=$(docker inspect rig02 --format '{{.Config.Image}}')
+# any image with python3 + ffmpeg: the rig's own (container rig02) unless E2E_IMAGE is set
+IMG=${E2E_IMAGE:-$(docker inspect rig02 --format '{{.Config.Image}}' 2>/dev/null || echo rig02-rtsp-manager:latest)}
 docker run --rm --network host -v "$HERE":/e2e -w /e2e mcr.microsoft.com/playwright/python:v1.49.1-noble \
   bash -c "pip -q install playwright==1.49.1 >/dev/null 2>&1; python portal_suite.py --base $BASE --mode $MODE --json results/$TS-portal.json"
 P=$?

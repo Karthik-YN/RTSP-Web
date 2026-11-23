@@ -169,14 +169,15 @@ Show the architecture diagram from Part 1 for 30 seconds. Don't go deeper yet.
 
 ### 2. Tour of the dashboard (2 min)
 
-Open the dashboard: there's no login, and you land on **Streams** with the getting-started guide.
+Open the dashboard: there's no login, and you land on **Overview**: every analytics by category with its live cameras.
 
 - Point to the top bar: "All systems normal", CPU, RAM, disk, stream capacity.
-- Point to the sidebar: Streams, Video library, Events, and below them the **Analytics** taskbar: Traffic, People, Earth Science and Parking, each with its analytics. The numbers show live/total streams; a red dot means one needs attention.
+- Point to the sidebar: Overview, Streams, Library, System (health, events, settings). The rig clock in the top bar shows the server time.
+- On Overview, show the analytics sections (Traffic, People, Earth Science, Parking, …). The numbers show live/total streams; a red mark means one needs attention.
 
 ### 3. The video library (3 min)
 
-Open **Video library**.
+Open **Library**. Mention the naming convention (`WHAT_WHERE_NN`, e.g. `ALPR_toll-s1_01.mp4`) and the **Naming guide**.
 
 - "Files get here by upload, or by copying them into a folder on the server."
 - Show a card: thumbnail, duration, resolution, frame rate, codec.
@@ -189,10 +190,10 @@ Optionally click **Upload video** and upload a small clip to show the progress b
 
 Say "I'll time this", and start a phone stopwatch.
 
-1. On `000003.mp4`, click **Stream this**.
+1. On a video card, click **New stream**.
 2. Show that the name is suggested. Change it to `store_entrance`.
-3. Click a thumbnail in the frame strip to jump to a moment. Click **Set as start**.
-4. Show the green summary: "Will publish stream copy from … to …".
+3. Drag the start and end handles on the film strip (or type the times). Optionally turn **Time on the video** on (IST/UTC).
+4. Show the summary beside the form: what will play, the output size and the RTSP URL.
 5. Point out the keyframe warning: "this camera has a keyframe every 10 seconds, so start times snap to the nearest one, and it tells you exactly where."
 6. Click **Create & start**, then **Copy URL**. Stop the stopwatch.
 
@@ -204,7 +205,7 @@ If you have the portal open, add it as a camera now (see `docs/EDGE_VALIDATION.m
 
 ### 4b. Run cameras for an analytics (3 min)
 
-1. In the left taskbar, open **People → PPE**.
+1. On **Overview**, open **People → PPE**.
 2. Click **Add video placeholder**. Give it a title ("Warehouse gate, day shift") and a description of the scene and what should be detected.
 3. Drag a video from your laptop onto the card (or **Upload from this device**). Point out the Uploads panel: the file goes to the server, not your laptop, and keeps going if you switch pages.
 4. Click **Run RTSP**, set **Number of cameras** to 3 and **Create 3 streams**. Show the names `ppe-1…3` and **Copy all URLs**.
