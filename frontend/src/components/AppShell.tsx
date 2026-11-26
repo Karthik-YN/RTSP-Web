@@ -12,9 +12,12 @@ import { formatClock, useRigClock } from "../lib/rigClock";
 import { isProblem } from "./StreamsTable";
 import { conversionSummary, type ConversionSummary } from "../lib/edge";
 import {
-  CameraIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
+  CameraIcon, ChevronLeftIcon, FilmIcon, GridIcon, KeyIcon, LogoutIcon, MenuIcon, MonitorIcon, MoonIcon,
   HomeIcon, PlusIcon, ServerIcon, SunIcon, UsersIcon,
 } from "./icons";
+
+/** The Plane docs landing page users come from (Streams / Tickets). */
+const DOCS_URL = "https://docs.v-analytics.in";
 
 // ------------------------------------------------------------------ create-stream launcher
 const CreateCtx = createContext<(videoId?: number, template?: StreamTemplate) => void>(() => {});
@@ -228,6 +231,9 @@ function TopBar({ onMenu, onCreate, onLogout }: { onMenu: () => void; onCreate: 
     <header ref={headerRef} className="sticky top-0 z-20 border-b border-line bg-surface/85 backdrop-blur">
       <div className="mx-auto flex max-w-[100rem] items-center gap-3 px-4 py-2.5 sm:px-6">
         <button className="btn-ghost p-1.5 lg:hidden" onClick={onMenu} aria-label="Open menu"><MenuIcon /></button>
+        <a href={DOCS_URL} className="btn-secondary whitespace-nowrap" title="Back to the docs page" aria-label="Back to docs">
+          <ChevronLeftIcon /> <span className="hidden sm:inline">Docs</span>
+        </a>
         <HealthPills />
         <div className="ml-auto flex items-center gap-2">
           <ConversionChip />
