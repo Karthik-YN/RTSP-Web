@@ -217,6 +217,9 @@ export const api = {
   deleteVideo: (id: number) => request<{ message: string }>("DELETE", `/api/videos/${id}`),
   convertVideo: (id: number, opts?: { profile: ConvertProfile; fit?: ConvertFit }) =>
     request<Conversion>("POST", `/api/videos/${id}/convert`, opts),
+  clipName: (id: number) => request<{ name: string }>("GET", `/api/videos/${id}/clip-name`),
+  clipVideo: (id: number, segments: [number, number][], name: string) =>
+    request<Conversion>("POST", `/api/videos/${id}/clip`, { segments, name }),
   conversions: () => request<Conversion[]>("GET", "/api/videos/conversions"),
   cancelConversion: (jobId: string) => request<Conversion>("DELETE", `/api/videos/conversions/${jobId}`),
   analyticsTree: () => request<AnalyticsCategory[]>("GET", "/api/analytics"),

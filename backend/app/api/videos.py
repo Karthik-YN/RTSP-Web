@@ -15,7 +15,7 @@ from ..schemas import ScanOut, UploadCheckIn, UploadCheckOut, VideoOut
 from ..services.auth import User
 from pydantic import BaseModel
 
-from ..services import naming
+from ..services import naming, naming_db
 from ..services import compatibility
 from ..services.converter import browser_playback, convert_reasons, is_copy, target_rel
 from ..services.agent import describe_agent
@@ -235,6 +235,37 @@ async def convert_video(video_id: int, body: ConvertIn | None = Body(default=Non
     body = body or ConvertIn()
     try:
         job = ctx.library.converter.start(video_id, user.username, body.profile, body.fit)
+    except LibraryError as exc:
+        raise _lib_error(exc)
+    return job.view()
+
+
+class ClipIn(BaseModel):
+    segments: list[tuple[float, float]]
+    name: str
+
+
+@router.get("/{video_id}/clip-name")
+def clip_name(video_id: int, ctx: Context = Depends(get_ctx), _: User = Depends(current_user)):
+    """A free file name (naming convention) for a new clip of this video."""
+    v = _get(ctx, video_id)
+    taken = naming_db.names_in_use(ctx.db) + [PurePosixPath(j.target).name for j in ctx.library.converter.jobs.values()
+                                             if j.active]
+    try:
+        codes = naming_db.code_set(ctx.db) if ctx.library.naming_mode() == "enforce" else None
+        return {"name": ctx.library.converter.clip_name(v, taken, codes)}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/{video_id}/clip", status_code=202)
+async def clip_video(video_id: int, body: ClipIn, ctx: Context = Depends(get_ctx),
+                     user: User = Depends(require_operator)):
+    """Cut ``segments`` ([start_s, end_s] pairs, in play order) out of a video and join them into a
+    new library video ``name`` (re-encoded camera-style, no audio). Follow it with
+    ``GET /api/videos/conversions``; ``result_video_id`` is the new video."""
+    try:
+        job = ctx.library.converter.start_clip(video_id, user.username, body.segments, body.name)
     except LibraryError as exc:
         raise _lib_error(exc)
     return job.view()

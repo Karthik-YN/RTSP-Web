@@ -496,7 +496,7 @@ export interface RunResult {
   skipped: string[];
 }
 
-export type ConvertProfile = "h264" | "720p" | "16x9";
+export type ConvertProfile = "h264" | "720p" | "16x9" | "clip";
 export type ConvertFit = "blur" | "pad" | "crop";
 
 export interface Conversion {
@@ -513,6 +513,8 @@ export interface Conversion {
   profile?: ConvertProfile;
   fit?: ConvertFit | null;
   label?: string;
+  /** clip jobs: [start_s, end_s] pairs in play order */
+  segments?: [number, number][] | null;
   created_at: string;
   finished_at: string | null;
 }

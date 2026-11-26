@@ -1,0 +1,32 @@
+# Video clipper side service: the clipper without restarting the main app.
+# Shares the main app's library volume; proxies everything else to it.
+#   docker compose -p rig02clipper -f docker-compose.clipper.yml up -d --build
+# Starting/stopping this never touches the main rig02 container or its streams.
+# Not needed once the main app runs a version that lists "clipper" in /api/config features.
+services:
+  clipper:
+    build: .
+    image: rig02-rtsp-manager:clipper
+    container_name: rig02-clipper
+    network_mode: host            # reaches the main app on 127.0.0.1, serves on :8083
+    entrypoint: ["tini", "--"]    # never the main entrypoint: that would start a second rig
+    command: ["python", "-m", "uvicorn", "app.clipper_service:app", "--app-dir", "/app/backend",
+              "--host", "0.0.0.0", "--port", "${RIG02_CLIPPER_PORT:-8083}", "--no-access-log"]
+    environment:
+      RTSPM_CLIPPER_UPSTREAM: "http://127.0.0.1:${RIG02_HTTP_PORT:-8081}"
+      CLIPPER_PORT: "${RIG02_CLIPPER_PORT:-8083}"
+      RTSPM_VIDEO_DIR: /data/videos
+      RTSPM_CLIPPER_TMP: /data/state/clipper-tmp
+    volumes:
+      - rig02-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('CLIPPER_PORT', '8083') + '/clipper/ping', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  rig02-data:
+    external: true
+    name: rig02_rig02-data

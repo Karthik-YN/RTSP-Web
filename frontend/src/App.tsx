@@ -17,6 +17,7 @@ const StreamPage = lazy(() => import("./pages/StreamPage").then((m) => ({ defaul
 const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
 const StreamsPage = lazy(() => import("./pages/StreamsPage").then((m) => ({ default: m.StreamsPage })));
 const LibraryPage = lazy(() => import("./pages/LibraryPage").then((m) => ({ default: m.LibraryPage })));
+const ClipperPage = lazy(() => import("./pages/ClipperPage").then((m) => ({ default: m.ClipperPage })));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 
 export default function App() {
@@ -78,6 +79,7 @@ export default function App() {
                 <Route path="/analytics/:id" element={<AnalyticsPage />} />
                 <Route path="/system" element={<SystemPage />} />
                 <Route path="/clock" element={<ClockPage />} />
+                <Route path="/clip/:id" element={<ClipperPage />} />
                 {/* old addresses keep working (bookmarks, links in alerts) */}
                 <Route path="/health" element={<Navigate to="/system" replace />} />
                 <Route path="/events" element={<Navigate to="/system?tab=events" replace />} />

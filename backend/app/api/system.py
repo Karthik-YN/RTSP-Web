@@ -63,7 +63,7 @@ def config(request: Request, ctx: Context = Depends(get_ctx), _: User = Depends(
                    "sizes": s.standard_sizes, "require_16_9": s.require_16_9},
         "preview": {"threshold_s": s.preview_threshold_s, "seconds": s.preview_seconds},
         # features this server has (the dashboard shows their controls only when listed)
-        "features": ["clock_overlay", "codecs", "naming", "duplicate_check"],
+        "features": ["clock_overlay", "codecs", "naming", "duplicate_check", "clipper"],
         "clock": {"zones": ["IST", "UTC"], "default": "IST"},
         "min_segment_s": s.min_segment_s,
         "allowed_extensions": s.allowed_extensions,

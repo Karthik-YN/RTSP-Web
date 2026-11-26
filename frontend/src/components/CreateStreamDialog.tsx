@@ -141,11 +141,47 @@ export function OutputSizeField({ out, video, value, onChange, isAdmin, idPrefix
 const LEAD_SHORT = (l: LeadInValue) => l.mode === "none" ? "none"
   : l.mode === "hold" ? `until a viewer, then ${l.seconds} s` : `${l.seconds} s slate`;
 
+/** Port of the clipper side service (docker-compose.clipper.yml), used while the main app has no built-in clipper. */
+export const CLIPPER_PORT = 8083;
+let clipperProbe: Promise<string | null> | null = null;
+
+/** Where the clipper lives: "" = this server (built in), an origin = the side service, null = none. */
+export function useClipperBase(builtIn: boolean): string | null {
+  const [base, setBase] = useState<string | null>(builtIn ? "" : null);
+  useEffect(() => {
+    if (builtIn) { setBase(""); return; }
+    const origin = `${window.location.protocol}//${window.location.hostname}:${CLIPPER_PORT}`;
+    clipperProbe ??= (async () => {
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 3000);
+        const r = await fetch(`${origin}/clipper/ping`, { signal: ctl.signal });
+        clearTimeout(timer);
+        return r.ok ? origin : null;
+      } catch { return null; } // not running / not reachable: no button
+    })();
+    let live = true;
+    void clipperProbe.then((o) => { if (live) setBase(o); });
+    return () => { live = false; };
+  }, [builtIn]);
+  return base;
+}
+
+/** The clipper page (opens in a new tab) for a video, seeded with the dialog's start/end times. */
+export function clipperHref(videoId: number, start: number | null, end: number | null, base = ""): string {
+  const q = new URLSearchParams();
+  if (start !== null) q.set("start", String(start));
+  if (end !== null) q.set("end", String(end));
+  const qs = q.toString();
+  return `${base}/clip/${videoId}${qs ? `?${qs}` : ""}`;
+}
+
 export function CreateStreamDialog({ videos, streams, config, initialVideoId, template, onClose, onCreated, isAdmin }: {
   videos: Video[]; streams: Stream[]; config: AppConfig; initialVideoId?: number; template?: StreamTemplate; isAdmin?: boolean;
   onClose: () => void; onCreated: () => void;
 }) {
   const addr = useRtspAddress();
+  const clipperBase = useClipperBase(!!config.features?.includes("clipper"));
   const ready = useMemo(() => videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject"), [videos]);
   const existing = useMemo(() => streams.map((s) => s.name), [streams]);
   const [videoId, setVideoId] = useState<number | null>(template?.videoId ?? initialVideoId ?? ready[0]?.id ?? null);
@@ -403,6 +439,15 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
               </div>
             </div>
             {rangeError && !st.error && !en.error && <ErrorBox>{rangeError}</ErrorBox>}
+            {video && clipperBase !== null && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2/60 px-3 py-2 text-xs ring-1 ring-inset ring-line">
+                <span className="text-muted">Only some parts of this video needed? Cut and join them into a new library video.</span>
+                <a className="btn-secondary btn-xs ml-auto" target="_blank" rel="noopener" data-testid="open-clipper"
+                  href={clipperHref(video.id, st.seconds, en.seconds, clipperBase)}>
+                  ✂ Use clipper for this video
+                </a>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               <Segmented name="create-mode" ariaLabel="Playback" value={mode} onChange={setMode}
                 options={[{ value: "loop", label: <span className="inline-flex items-center gap-1.5"><LoopIcon className="h-3.5 w-3.5" /> Loop</span> },

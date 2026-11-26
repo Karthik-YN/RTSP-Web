@@ -400,7 +400,7 @@ export function useConversions(onChanged: () => void) {
 }
 
 const WHAT: Record<ConvertProfile, string> = {
-  h264: "Converting to H.264", "720p": "Making a 720p copy", "16x9": "Making a 16:9 copy",
+  h264: "Converting to H.264", "720p": "Making a 720p copy", "16x9": "Making a 16:9 copy", clip: "Making a clip",
 };
 
 function formatEta(s: number | null): string {

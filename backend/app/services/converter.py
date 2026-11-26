@@ -53,7 +53,9 @@ LONG_GOP_S = 4.0
 PROFILES = ("h264", "720p", "16x9")
 FITS = ("blur", "pad", "crop")
 PROFILE_SUFFIX = {"h264": SUFFIX, "720p": " (720p)", "16x9": " (720p 16x9)"}
-PROFILE_LABEL = {"h264": "H.264 copy", "720p": "720p copy", "16x9": "16:9 copy"}
+PROFILE_LABEL = {"h264": "H.264 copy", "720p": "720p copy", "16x9": "16:9 copy", "clip": "Clip"}
+MAX_CLIP_SEGMENTS = 100
+MIN_SEGMENT_S = 0.2
 
 
 # Copies of files named by the convention (WHAT_WHERE_NN) get tags instead: ALPR_toll-s1_01_720p.mp4
@@ -122,6 +124,7 @@ class Job:
     username: str | None
     profile: str = "h264"
     fit: str | None = None
+    segments: list[tuple[float, float]] | None = None  # clip jobs: (start_s, end_s) in play order
     state: str = "queued"  # queued | running | done | failed | cancelled
     progress: float = 0.0
     error: str | None = None
@@ -145,6 +148,7 @@ class Job:
                 "state": self.state, "progress": round(self.progress, 3), "eta_s": eta, "error": self.error,
                 "result_video_id": self.result_video_id, "username": self.username,
                 "profile": self.profile, "fit": self.fit, "label": PROFILE_LABEL[self.profile],
+                "segments": [list(s) for s in self.segments] if self.segments else None,
                 "created_at": self.created_at, "finished_at": self.finished_at}
 
 
@@ -207,6 +211,96 @@ class Converter:
         self.lib.events.add("video.convert_started", f"{v.rel_path} -> {tgt}", username=username,
                             data={"video_id": v.id, "job": job.id})
         return job
+
+    # ---------------------------------------------------------- clips
+    def clip_name(self, v: Video, existing: list[str], codes: set[str] | None = None) -> str:
+        """A free convention name for a clip of ``v``: the same WHAT_WHERE with the next NN
+        (WHAT falls back to a known analytics code when ``codes`` is given and the source's isn't one)."""
+        parsed = naming.parse(PurePosixPath(v.rel_path).name)
+        if parsed is not None and codes is not None and parsed.what not in codes:
+            what = naming.MISC
+            return naming.build(what, parsed.where, naming.next_number(what, parsed.where, existing), [], ".mp4")
+        if parsed is not None:
+            drop = {"h264", "720p", "1080p", "4k", "16x9"}
+            tags = [t for t in parsed.tags if t not in drop]
+            return naming.build(parsed.what, parsed.where, naming.next_number(parsed.what, parsed.where, existing),
+                                tags, ".mp4")
+        name = naming.suggest(PurePosixPath(v.rel_path).stem + ".mp4", codes or set(), existing)
+        return name or f"{PurePosixPath(v.rel_path).stem}_clip.mp4"
+
+    def start_clip(self, video_id: int, username: str | None, segments: list[tuple[float, float]],
+                   name: str) -> Job:
+        """Cut ``segments`` out of a video, join them in order and add the result to the library as ``name``.
+
+        Re-encoded camera-style like every copy (H.264, no B-frames, keyframe every 2 s, no audio),
+        so the cuts are frame-exact and the clip streams in copy mode."""
+        with self.lib.db.session() as s:
+            v = s.get(Video, video_id)
+        if v is None:
+            raise LibraryError(f"Video {video_id} not found.", 404)
+        if v.status != VideoStatus.READY or v.compat_mode == compatibility.REJECT:
+            raise LibraryError(f"'{v.rel_path}' can't be clipped: {v.error or 'it is not a readable video'}.", 409)
+        if not segments:
+            raise LibraryError("Mark at least one segment.", 422)
+        if len(segments) > MAX_CLIP_SEGMENTS:
+            raise LibraryError(f"At most {MAX_CLIP_SEGMENTS} segments per clip.", 422)
+        dur = v.duration_s or 0
+        clean: list[tuple[float, float]] = []
+        for i, (a, b) in enumerate(segments, 1):
+            a, b = float(a), float(b)
+            if b < a:
+                a, b = b, a
+            a = max(0.0, a)
+            if dur > 0:
+                b = min(b, dur)
+            if b - a < MIN_SEGMENT_S:
+                raise LibraryError(f"Segment {i} is shorter than {MIN_SEGMENT_S:g} s.", 422)
+            clean.append((round(a, 3), round(b, 3)))
+        name = (name or "").strip()
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            raise LibraryError("Give the clip a file name.", 422)
+        if not name.lower().endswith(".mp4"):
+            name = PurePosixPath(name).stem + ".mp4" if PurePosixPath(name).suffix else name + ".mp4"
+        self.lib.naming_gate(name)
+        parent = PurePosixPath(v.rel_path).parent
+        tgt = str(parent / name) if str(parent) not in ("", ".") else name
+        if self.lib.lib.resolve(tgt).exists():
+            raise LibraryError(f"'{name}' already exists in the library: pick another name.", 409)
+        if any(j.active and j.target == tgt for j in self.jobs.values()):
+            raise LibraryError(f"'{name}' is already being made.", 409)
+        total = sum(b - a for a, b in clean)
+        pixels = (v.width or 1920) * (v.height or 1080)
+        need = int(total * max(2.0, 8.0 * pixels / (1920 * 1080)) * 1e6 / 8)
+        du = self.lib.lib.disk_usage()
+        if du["free"] - need < self.lib.lib.reserve_bytes(du["total"]):
+            raise LibraryError(f"Not enough disk space for the clip (about {need / 2**20:.0f} MiB needed).", 507,
+                               {"free": du["free"]})
+        job = Job(uuid.uuid4().hex[:12], v.id, v.rel_path, tgt, username, "clip", None, clean)
+        self.jobs[job.id] = job
+        job.task = asyncio.create_task(self._run(job, v), name=f"clip-{job.id}")
+        self.lib.events.add("video.clip_started", f"{v.rel_path} -> {tgt} ({len(clean)} segments, {total:.1f} s)",
+                            username=username, data={"video_id": v.id, "job": job.id})
+        return job
+
+    def clip_command(self, v: Video, src: Path, out: Path, segments: list[tuple[float, float]]) -> list[str]:
+        fps = v.fps if v.fps and v.fps > 0 else 25.0
+        gop = max(1, int(round(fps * self.s.x264_gop_seconds)))
+        cmd = [self.s.ffmpeg_bin, "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats", "-y"]
+        for a, b in segments:  # input seeking per segment: fast, and exact because we re-encode
+            cmd += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
+        even = "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
+        parts = ";".join(f"[{i}:v:0]{even},setpts=PTS-STARTPTS[v{i}]" for i in range(len(segments)))
+        joined = "".join(f"[v{i}]" for i in range(len(segments)))
+        graph = f"{parts};{joined}concat=n={len(segments)}:v=1:a=0[out]"
+        cmd += ["-filter_complex", graph, "-map", "[out]", "-sn", "-dn", "-an",
+                "-c:v", "libx264", "-preset", self.s.convert_preset, "-crf", str(self.s.convert_crf),
+                "-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "0",
+                "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
+                "-force_key_frames", f"expr:gte(t,n_forced*{self.s.x264_gop_seconds:g})",
+                "-movflags", "+faststart", "-f", "mp4", "-progress", "pipe:1", str(out)]
+        if self.s.convert_threads > 0:
+            cmd[cmd.index("-preset"):cmd.index("-preset")] = ["-threads", str(self.s.convert_threads)]
+        return cmd
 
     async def cancel(self, job_id: str) -> Job:
         job = self.jobs.get(job_id)
@@ -281,7 +375,7 @@ class Converter:
                     raise LibraryError(f"The converted file is not readable: {exc}", 422)
                 if (meta.video_codec or "").lower() != "h264":
                     raise LibraryError("The converted file has no H.264 video.", 422)
-                if job.profile != "h264" and (meta.width, meta.height) != (self.s.output_width, self.s.output_height):
+                if job.profile in ("720p", "16x9") and (meta.width, meta.height) != (self.s.output_width, self.s.output_height):
                     raise LibraryError(f"The copy came out {meta.width}x{meta.height}, not "
                                        f"{self.s.output_width}x{self.s.output_height}.", 422)
                 final.parent.mkdir(parents=True, exist_ok=True)
@@ -299,7 +393,7 @@ class Converter:
                     video = row if row is not None else await self.lib._ingest(job.target, final.stat(), None)
                 job.result_video_id = video.id
                 job.progress, job.state = 1.0, "done"
-                self.lib.events.add("video.converted", f"{job.source} -> {job.target}", username=job.username,
+                self.lib.events.add("video.clipped" if job.profile == "clip" else "video.converted", f"{job.source} -> {job.target}", username=job.username,
                                     data={"video_id": video.id, "source_video_id": job.video_id, "job": job.id})
         except asyncio.CancelledError:
             job.state = "cancelled"
@@ -322,9 +416,11 @@ class Converter:
         kw = {}
         if os.name == "posix":
             kw["preexec_fn"] = lambda: os.nice(10)  # never starve the live publishers
+        cmd = (self.clip_command(v, src, out, job.segments) if job.profile == "clip"
+               else self.command(v, src, out, job.profile, job.fit))
         job.proc = proc = await asyncio.create_subprocess_exec(
-            *self.command(v, src, out, job.profile, job.fit), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kw)
-        duration = v.duration_s or 0
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kw)
+        duration = sum(b - a for a, b in job.segments) if job.segments else (v.duration_s or 0)
         err_task = asyncio.create_task(proc.stderr.read())
         async for raw in proc.stdout:
             line = raw.decode(errors="replace").strip()
