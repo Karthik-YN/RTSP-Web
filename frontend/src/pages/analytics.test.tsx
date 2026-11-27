@@ -289,3 +289,11 @@ describe("Library and analytics", () => {
     expect(screen.getByRole("link", { name: /In library/ })).toHaveAttribute("href", "/library?analytics=21");
   });
 });
+
+describe("TagButton", () => {
+  it("is hidden outside the app data (lone dialogs, tests) instead of crashing", async () => {
+    const { TagButton } = await import("../components/LibraryAnalytics");
+    const { container } = render(<TagButton videoIds={[1]} />);
+    expect(container.innerHTML).toBe("");
+  });
+});

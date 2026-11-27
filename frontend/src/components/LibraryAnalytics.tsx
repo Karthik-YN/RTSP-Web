@@ -2,7 +2,9 @@
 import { useMemo, useState } from "react";
 import { api, ApiError } from "../services/api";
 import type { AnalyticsCategory, AnalyticsSuggestion, Video } from "../types/api";
-import { ErrorBox, Modal, Spinner } from "./common";
+import { ErrorBox, Modal, Spinner, useToast } from "./common";
+import { useRigPick } from "../hooks/useRigData";
+import { TagIcon } from "./icons";
 
 import type { AnalyticsFilter } from "../lib/libraryFilters";
 export type { AnalyticsFilter };
@@ -161,5 +163,39 @@ export function SuggestionsDialog({ items, onClose, onDone }: {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** A visible "Tag" button: link one or more library videos to analytics (opens the picker). Usable anywhere. */
+export function TagButton({ videoIds, compact = false, className = "" }: {
+  videoIds: number[]; compact?: boolean; className?: string;
+}) {
+  const rig = useRigPick(["videos", "analytics", "user"]);
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const videos = (rig?.videos ?? []).filter((v) => videoIds.includes(v.id));
+  if (!rig || !rig.user?.can_write || videos.length === 0) return null;
+  const untagged = videos.every((v) => !v.analytics?.length);
+  const label = untagged ? "Tag to analytics" : "Tag";
+  return (
+    <>
+      <button type="button" data-testid="tag-button"
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${untagged
+          ? "border border-dashed border-brand/60 text-brand hover:bg-brand-soft"
+          : "bg-surface-2 text-muted ring-1 ring-inset ring-line hover:text-fg"} ${className}`}
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        title="Link to analytics" aria-label={`Link ${videos.length === 1 ? videos[0].filename : `${videos.length} videos`} to analytics`}>
+        <TagIcon className="h-3 w-3" />{compact && !untagged ? null : <span>{label}</span>}
+      </button>
+      {open && rig.analytics && (
+        <AssignDialog videos={videos} tree={rig.analytics} onClose={() => setOpen(false)}
+          onDone={(added, n) => {
+            setOpen(false);
+            toast("ok", n ? `Linked to ${added.join(", ")}.` : "Already in those analytics.");
+            rig.refreshVideos();
+            rig.refreshAnalytics();
+          }} />
+      )}
+    </>
   );
 }

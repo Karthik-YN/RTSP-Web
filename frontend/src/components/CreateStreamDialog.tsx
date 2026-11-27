@@ -6,7 +6,8 @@ import { LivePlayer } from "./LivePlayer";
 import { CopyButton, ErrorBox, Modal, Pill, Spinner, WarnBox } from "./common";
 import { leadInBody, leadInError, LeadInFields, type LeadInValue } from "./LeadIn";
 import { useRtspAddress } from "../hooks/useRtspAddress";
-import { useSystemMaybe } from "../hooks/useRigData";
+import { useRigVideos, useSystemMaybe } from "../hooks/useRigData";
+import { TagButton } from "./LibraryAnalytics";
 import { FrameAt, Hint, Section, Segmented, SummaryRow, Timeline, useMediaQuery, VideoPicker } from "./FormParts";
 import { AlertIcon, CheckIcon, ChevronIcon, ClockIcon, LoopIcon, PlayIcon } from "./icons";
 
@@ -150,15 +151,19 @@ export function useClipperBase(builtIn: boolean): string | null {
   const [base, setBase] = useState<string | null>(builtIn ? "" : null);
   useEffect(() => {
     if (builtIn) { setBase(""); return; }
-    const origin = `${window.location.protocol}//${window.location.hostname}:${CLIPPER_PORT}`;
+    // 1) behind a proxy/domain that routes to the clipper (same address), 2) the clipper's own port
+    const candidates = ["", `${window.location.protocol}//${window.location.hostname}:${CLIPPER_PORT}`];
     clipperProbe ??= (async () => {
-      try {
-        const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), 3000);
-        const r = await fetch(`${origin}/clipper/ping`, { signal: ctl.signal });
-        clearTimeout(timer);
-        return r.ok ? origin : null;
-      } catch { return null; } // not running / not reachable: no button
+      for (const origin of candidates) {
+        try {
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 3000);
+          const r = await fetch(`${origin}/clipper/ping`, { signal: ctl.signal });
+          clearTimeout(timer);
+          if (r.ok && (await r.json())?.service === "clipper") return origin;
+        } catch { /* not there: try the next */ }
+      }
+      return null; // not running / not reachable: no button
     })();
     let live = true;
     void clipperProbe.then((o) => { if (live) setBase(o); });
@@ -176,16 +181,44 @@ export function clipperHref(videoId: number, start: number | null, end: number |
   return `${base}/clip/${videoId}${qs ? `?${qs}` : ""}`;
 }
 
+/** "Use clipper for this video": always shown; opens the clipper (built in, same address, or port 8083) in a new tab. */
+export function ClipperButton({ videoId, start, end, builtIn }: {
+  videoId: number; start: number | null; end: number | null; builtIn: boolean;
+}) {
+  const found = useClipperBase(builtIn);
+  const fallback = `${window.location.protocol}//${window.location.hostname}:${CLIPPER_PORT}`;
+  const [checked, setChecked] = useState(builtIn);
+  useEffect(() => { if (!builtIn) void clipperProbe?.then(() => setChecked(true)); }, [builtIn]);
+  const unreachable = checked && found === null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2/60 px-3 py-2 text-xs ring-1 ring-inset ring-line">
+      <span className="text-muted">Only some parts of this video needed? Cut and join them into a new library video.</span>
+      <a className="btn-secondary btn-xs ml-auto" target="_blank" rel="noopener" data-testid="open-clipper"
+        href={clipperHref(videoId, start, end, found ?? fallback)}>
+        ✂ Use clipper for this video
+      </a>
+      {unreachable && (
+        <p className="w-full text-amber-700 dark:text-amber-300" data-testid="clipper-unreachable">
+          The clipper service could not be reached from this browser (port {CLIPPER_PORT}). If the new tab does not
+          load, open RTSP Studio on the office/Tailscale address (http://…:8081), or ask the admin to route this
+          address to port {CLIPPER_PORT}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function CreateStreamDialog({ videos, streams, config, initialVideoId, template, onClose, onCreated, isAdmin }: {
   videos: Video[]; streams: Stream[]; config: AppConfig; initialVideoId?: number; template?: StreamTemplate; isAdmin?: boolean;
   onClose: () => void; onCreated: () => void;
 }) {
   const addr = useRtspAddress();
-  const clipperBase = useClipperBase(!!config.features?.includes("clipper"));
+  const rigVideos = useRigVideos();
   const ready = useMemo(() => videos.filter((v) => v.status === "READY" && v.compat_mode !== "reject"), [videos]);
   const existing = useMemo(() => streams.map((s) => s.name), [streams]);
   const [videoId, setVideoId] = useState<number | null>(template?.videoId ?? initialVideoId ?? ready[0]?.id ?? null);
   const video = ready.find((v) => v.id === videoId) ?? null;
+  const liveVideo = rigVideos?.find((v) => v.id === videoId) ?? null; // fresh analytics tags after tagging
   const [name, setName] = useState(() => template?.name ? suggestName(template.name, existing)
     : video ? suggestName(video.filename, existing) : "");
   const [nameTouched, setNameTouched] = useState(!!template?.name);
@@ -393,6 +426,16 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
             <VideoPicker id="video" videos={ready} value={videoId}
               onChange={(id) => { setVideoId(id); setSlider(0); }}
               blocked={(v) => blockedShape(v, config.output) ? `not 16:9 (${SHAPE_TEXT[v.shape ?? "other"]})` : null} />
+            {video && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="dialog-analytics">
+                <span className="text-muted">Analytics:</span>
+                {(liveVideo ?? video).analytics?.length
+                  ? [...new Map((liveVideo ?? video).analytics!.map((a) => [a.id, a])).values()].map((a) => (
+                    <span key={a.id} className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand">{a.name}</span>))
+                  : <span className="italic text-subtle">not in any analytics yet</span>}
+                <TagButton videoIds={[video.id]} />
+              </div>
+            )}
             {video && video.compat_mode === "transcode" && (
               <WarnBox>{video.compat_reasons.join(" ")} It will be transcoded to H.264 (CPU cost).</WarnBox>
             )}
@@ -439,15 +482,7 @@ export function CreateStreamDialog({ videos, streams, config, initialVideoId, te
               </div>
             </div>
             {rangeError && !st.error && !en.error && <ErrorBox>{rangeError}</ErrorBox>}
-            {video && clipperBase !== null && (
-              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2/60 px-3 py-2 text-xs ring-1 ring-inset ring-line">
-                <span className="text-muted">Only some parts of this video needed? Cut and join them into a new library video.</span>
-                <a className="btn-secondary btn-xs ml-auto" target="_blank" rel="noopener" data-testid="open-clipper"
-                  href={clipperHref(video.id, st.seconds, en.seconds, clipperBase)}>
-                  ✂ Use clipper for this video
-                </a>
-              </div>
-            )}
+            {video && <ClipperButton videoId={video.id} start={st.seconds} end={en.seconds} builtIn={!!config.features?.includes("clipper")} />}
             <div className="flex flex-wrap items-center gap-3">
               <Segmented name="create-mode" ariaLabel="Playback" value={mode} onChange={setMode}
                 options={[{ value: "loop", label: <span className="inline-flex items-center gap-1.5"><LoopIcon className="h-3.5 w-3.5" /> Loop</span> },

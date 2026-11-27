@@ -125,6 +125,21 @@ export function useRig(): RigData {
   }), [state]);
 }
 
+/** The rig state, redrawing only when one of ``keys`` changes; null outside the provider (tests, lone dialogs). */
+export function useRigPick(keys: Key[]): RigData | null {
+  const store = useContext(Ctx);
+  const sig = keys.join(",");
+  const subscribe = useMemo(() => (f: () => void) => (store ? store.subscribe(f) : () => {}), [store]);
+  const snapshot = () => (store ? sig.split(",").map((k) => store.versions[k as Key] ?? 0).join(";") : "");
+  useSyncExternalStore(subscribe, snapshot, snapshot);
+  return store ? store.state : null;
+}
+
+/** The library videos (fresh after tagging/uploads), or null outside the provider. */
+export function useRigVideos(): Video[] | null {
+  return useRigPick(["videos"])?.videos ?? null;
+}
+
 /** The rig's server stats, or null outside the provider (dialogs rendered on their own, tests). */
 export function useSystemMaybe(): SystemInfo | null {
   const store = useContext(Ctx);

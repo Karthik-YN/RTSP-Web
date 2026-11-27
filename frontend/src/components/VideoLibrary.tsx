@@ -11,7 +11,7 @@ import type { Conversion, ConvertFit, ConvertProfile, OutputConfig, PreviewConfi
 import { useRig } from "../hooks/useRigData";
 import { isStreamLive, StreamSetControls } from "./BulkControls";
 import { NameChips, RenameDialog } from "./Naming";
-import { AnalyticsFilterSelect, AssignDialog } from "./LibraryAnalytics";
+import { AnalyticsFilterSelect, AssignDialog, TagButton } from "./LibraryAnalytics";
 import { SHAPE_TEXT } from "./CreateStreamDialog";
 import { ConfirmDialog, ErrorBox, Modal, MoreMenu, Pill, Skeleton, Spinner, useToast } from "./common";
 import {
@@ -656,7 +656,10 @@ const VideoCard = memo(function VideoCard(p: ItemProps) {
           {v.fps ? `${v.fps.toFixed(3).replace(/\.?0+$/, "")} fps` : "–"} · {v.video_codec}{v.bit_depth && v.bit_depth !== 8 ? ` ${v.bit_depth}-bit` : ""} · {formatBytes(v.size_bytes)}
         </div>
         <UploaderLine v={v} />
-        {!!v.analytics?.length && <AnalyticsChips v={v} />}
+        <div className="flex flex-wrap items-center gap-1">
+          {!!v.analytics?.length && <AnalyticsChips v={v} />}
+          {canWrite && <TagButton videoIds={[v.id]} />}
+        </div>
         <Flags v={v} out={out} onOpen={() => setDetails(true)} sameAs={p.sameAs} />
         {job && <ConversionProgress job={job} onCancel={canWrite ? onCancel : undefined} />}
         {v.streams_using > 0 && canWrite && <VideoStreamsBar videoId={v.id} />}
@@ -730,6 +733,7 @@ const VideoRow = memo(function VideoRow(p: ItemProps) {
       </div>
       {job && <div className="w-full sm:w-48"><ConversionProgress job={job} onCancel={canWrite ? onCancel : undefined} /></div>}
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        {canWrite && <TagButton videoIds={[v.id]} compact />}
         <MainAction v={v} canWrite={canWrite} blocked={blocked} job={job} onCreateStream={onCreateStream} onFit={onFit}
           onPlay={() => setPlaying(true)} compact />
         <ItemMenu v={v} canWrite={canWrite} isAdmin={isAdmin} out={out} job={job} onAssign={onAssign} onDelete={onDelete}
@@ -773,7 +777,8 @@ export function VideoAnalyticsLine({ v, className = "" }: { v: Video; className?
     <div className={`flex flex-wrap items-center gap-2 text-xs ${className}`} data-testid="video-analytics">
       <span className="text-muted">Analytics:</span>
       {v.analytics?.length ? <AnalyticsChips v={v} all />
-        : <span className="italic text-subtle">not in any analytics yet (use the tag button to add it)</span>}
+        : <span className="italic text-subtle">not in any analytics yet</span>}
+      <TagButton videoIds={[v.id]} />
     </div>
   );
 }

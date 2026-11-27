@@ -14,7 +14,7 @@ import { codeTone } from "../components/Naming";
 import { queueText, StreamsTable } from "../components/StreamsTable";
 import { GoButton, leadInBody, LeadInFields, leadText, type LeadInValue } from "../components/LeadIn";
 import { videoProblems } from "../lib/libraryFilters";
-import { blockedShape, ClockField, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
+import { blockedShape, ClipperButton, ClockField, FastStartNotice, OutputSizeField, outputPlan, SHAPE_TEXT } from "../components/CreateStreamDialog";
 import { Section, Segmented, videoChips } from "../components/FormParts";
 import {
   CameraIcon, ChevronIcon, CopyIcon, DownloadIcon, EditIcon, EyeIcon, FilmIcon, MonitorIcon, PlayIcon, SearchIcon, StopIcon, TrashIcon, UploadIcon,
@@ -749,6 +749,8 @@ function RunDialog({ slot, video, analyticsName, onClose, onDone }: {
                 <p className={`mt-1 text-xs ${endErr ? "text-red-600" : "text-muted"}`}>{endErr ?? "to the end if empty"}</p>
               </div>
             </div>
+            <ClipperButton videoId={video.id} start={parseTime(start).seconds} end={parseTime(end).seconds}
+              builtIn={!!config?.features?.includes("clipper")} />
             <div className="flex flex-wrap items-center gap-3">
               <Segmented name="run-mode" ariaLabel="Playback" value={mode} onChange={setMode}
                 options={[{ value: "loop", label: "Loop forever" }, { value: "once", label: "Play once" }]} />

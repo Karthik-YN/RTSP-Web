@@ -9,6 +9,7 @@ import { api, ApiError } from "../services/api";
 import { useRig } from "../hooks/useRigData";
 import { useCreateStream } from "../components/AppShell";
 import { ErrorBox, Spinner, WarnBox } from "../components/common";
+import { TagButton } from "../components/LibraryAnalytics";
 import { formatDuration, formatTime } from "../lib/format";
 import type { Conversion } from "../types/api";
 
@@ -318,6 +319,7 @@ export function ClipperPage() {
                 <div className="flex flex-wrap gap-2">
                   <button className="btn-primary btn-xs" onClick={() => openCreate(job.result_video_id!)}>New stream with this clip</button>
                   <Link className="btn-secondary btn-xs" to="/library">Open library</Link>
+                  <TagButton videoIds={[job.result_video_id]} className="self-center" />
                 </div>
                 <p className="text-xs">It is also in the video list of the New stream dialog in your other tab.</p>
               </div>
